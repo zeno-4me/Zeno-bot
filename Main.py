@@ -297,4 +297,74 @@ async def points(interaction: discord.Interaction, user: discord.Member = None):
         color=discord.Color.purple()
     )
     embed.set_thumbnail(url=target.display_avatar.url)
-    embed.add_field(name="🏆 إجمالي النقاط", value=f"```fix\n{round(pts, 2)} نقطة\n
+    embed.add_field(name="🏆 إجمالي النقاط", value=f"```fix\n{round(pts, 2)} نقطة\n```", inline=False)
+    embed.add_field(name="🖼️ الصور", value=f"**{imgs}** صورة", inline=True)
+    embed.add_field(name="🎞️ الـ GIF", value=f"**{gifs}** متحركة", inline=True)
+    embed.add_field(name="🎥 الفيديوهات", value=f"**{vids}** فيديو\n(`{mins}` دقيقة)", inline=True)
+    embed.set_footer(text=interaction.guild.name, icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
+
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="leaderboard", description="🏆 عرض قائمة صدارة الأعضاء الأعلى نقاطاً")
+async def leaderboard(interaction: discord.Interaction):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT user_id, points FROM user_points WHERE guild_id = ? ORDER BY points DESC LIMIT 10", (interaction.guild_id,))
+    rows = c.fetchall()
+    conn.close()
+
+    if not rows:
+        await interaction.response.send_message("❌ لا توجد بيانات نقاط حتى الآن في هذا السيرفر.")
+        return
+
+    embed = discord.Embed(
+        title="🏆 قائمة الصدارة (Top 10)",
+        description="أعلى الأعضاء جمعاً للنقاط من الوسائط والمشاركات:",
+        color=discord.Color.gold()
+    )
+
+    medals = ["🥇", "🥈", "🥉"]
+    leaderboard_text = ""
+
+    for i, (user_id, pts) in enumerate(rows):
+        member = interaction.guild.get_member(user_id)
+        mention = member.mention if member else f"<@{user_id}>"
+        rank_icon = medals[i] if i < 3 else f"**#{i+1}**"
+        leaderboard_text += f"{rank_icon} | {mention} — **{round(pts, 2)}** نقطة\n"
+
+    embed.description = leaderboard_text
+    embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
+    embed.set_footer(text=f"طلب بواسطة: {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="reset_points", description="🔄 إعادة ضبط وتصفير النقاط")
+@app_commands.checks.has_permissions(administrator=True)
+async def reset_points(interaction: discord.Interaction, target_user: discord.Member = None):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    if target_user:
+        c.execute("DELETE FROM user_points WHERE guild_id = ? AND user_id = ?", (interaction.guild_id, target_user.id))
+        msg = f"🔄 تم تصفير نقاط {target_user.mention} بنجاح."
+    else:
+        c.execute("DELETE FROM user_points WHERE guild_id = ?", (interaction.guild_id,))
+        msg = "💥 تم تصفير جميع نقاط الأعضاء في السيرفر."
+
+    conn.commit()
+    conn.close()
+
+    embed = discord.Embed(
+        title="🗑️ إعادة ضبط النقاط",
+        description=msg,
+        color=discord.Color.red()
+    )
+    await interaction.response.send_message(embed=embed)
+
+if __name__ == "__main__":
+    Thread(target=run_flask, daemon=True).start()
+    TOKEN = os.getenv("DISCORD_TOKEN")
+    if TOKEN:
+        bot.run(TOKEN)
+    else:
+        print("Error: DISCORD_TOKEN missing.")
