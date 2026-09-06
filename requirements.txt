@@ -2,3 +2,4 @@ discord.py
 aiohttp
 moviepy==1.0.3
 imageio-ffmpeg
+flask
