@@ -1,3 +1,4 @@
 discord.py
 aiohttp
-moviepy
+moviepy==1.0.3
+imageio-ffmpeg
