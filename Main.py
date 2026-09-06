@@ -194,7 +194,6 @@ async def reset_points(interaction: discord.Interaction, target_user: discord.Me
 if __name__ == "__main__":
     TOKEN = os.getenv("DISCORD_TOKEN")
     if TOKEN:
-        loop = asyncio.get_event_loop()
-        loop.create_task(bot.start(TOKEN))
+        bot.run(TOKEN)
     else:
         print("Error: DISCORD_TOKEN missing.")
