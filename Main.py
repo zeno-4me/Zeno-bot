@@ -1,4 +1,4 @@
-import os, sqlite3, tempfile, asyncio, aiohttp, discord
+import os, sqlite3, tempfile, threading, asyncio, aiohttp, discord
 from flask import Flask
 from moviepy.editor import VideoFileClip
 from discord import app_commands
@@ -191,9 +191,15 @@ async def reset_points(interaction: discord.Interaction, target_user: discord.Me
     conn.close()
     await interaction.response.send_message(msg)
 
-if __name__ == "__main__":
+def run_bot():
     TOKEN = os.getenv("DISCORD_TOKEN")
     if TOKEN:
-        bot.run(TOKEN)
-    else:
-        print("Error: DISCORD_TOKEN missing.")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(bot.start(TOKEN))
+
+threading.Thread(target=run_bot, daemon=True).start()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
