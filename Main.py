@@ -325,5 +325,9 @@ async def reset_points(interaction: discord.Interaction, target_user: discord.Me
     conn.close()
     await interaction.response.send_message(msg)
 
-# Run Bot (Put your Token here)
-bot.run("YOUR_BOT_TOKEN_HERE")
+# Run Bot
+TOKEN = os.getenv("DISCORD_TOKEN")
+if TOKEN:
+    bot.run(TOKEN)
+else:
+    print("Error: DISCORD_TOKEN environment variable not set.")
