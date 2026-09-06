@@ -1,20 +1,25 @@
 import os, sqlite3, tempfile, asyncio, aiohttp, discord
-from flask import Flask
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Thread
 from moviepy.editor import VideoFileClip
 from discord import app_commands
 from discord.ext import commands
 
-app = Flask(__name__)
+# --- HTTP Health Check Server for Render ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is Live!")
 
-@app.route('/')
-def home():
-    return "Bot is Online & Running Perfectly!"
-
-def run_flask():
+def run_health_server():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
 
+Thread(target=run_health_server, daemon=True).start()
+
+# --- Discord Bot Setup ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.messages = True
@@ -362,7 +367,6 @@ async def reset_points(interaction: discord.Interaction, target_user: discord.Me
     await interaction.response.send_message(embed=embed)
 
 if __name__ == "__main__":
-    Thread(target=run_flask, daemon=True).start()
     TOKEN = os.getenv("DISCORD_TOKEN")
     if TOKEN:
         bot.run(TOKEN)
