@@ -1,3 +1,21 @@
+import os
+from flask import Flask
+from threading import Thread
+
+# Flask App for Render Port Check
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is Alive!"
+
+def run():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+Thread(target=run).start()
+
+# باقي كود البوت تبعك يبدأ من هنا...
 import discord
 from discord import app_commands
 from discord.ext import commands
