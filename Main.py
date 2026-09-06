@@ -2,18 +2,21 @@ import os
 from flask import Flask
 from threading import Thread
 
-# Flask App for Render Port Check
-app = Flask('')
+app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is Alive!"
+    return "Bot is alive!"
 
 def run():
-    port = int(os.environ.get("PORT", 8080))
+    # Render بيحدد المنفذ تلقائياً عبر PORT
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-Thread(target=run).start()
+# تشغيل السيرفر في Thread مستقل فوراً
+t = Thread(target=run)
+t.daemon = True
+t.start()
 
 # باقي كود البوت تبعك يبدأ من هنا...
 import discord
