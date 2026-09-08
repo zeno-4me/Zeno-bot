@@ -223,6 +223,8 @@ async def setup_points(
     video_points: float, 
     video_minute_points: float
 ):
+    await interaction.response.defer()
+    
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("""
@@ -248,7 +250,7 @@ async def setup_points(
     embed.add_field(name="⏱️ نقاط دقيقة الفيديو", value=f"`{video_minute_points}`", inline=True)
     embed.set_footer(text=f"بواسطة: {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
 
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="setup_channels", description="📌 تحديد الرومات أو الكاتجوري المسموح بها")
 @app_commands.checks.has_permissions(administrator=True)
@@ -257,6 +259,8 @@ async def setup_channels(
     channel: discord.TextChannel = None, 
     category: discord.CategoryChannel = None
 ):
+    await interaction.response.defer(ephemeral=True)
+    
     cfg = get_config(interaction.guild_id)
     chs, cats = cfg["allowed_channels"], cfg["allowed_categories"]
 
@@ -282,10 +286,11 @@ async def setup_channels(
         embed.add_field(name="📁 الكاتجوري المضاف", value=f"**{category.name}**", inline=False)
     
     embed.set_footer(text="سيتم احتساب النقاط فقط في الرومات المحددة.")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="points", description="📊 عرض تفاصيل النقاط والإحصائيات الخاصة بك أو بعضو آخر")
 async def points(interaction: discord.Interaction, user: discord.Member = None):
+    await interaction.response.defer()
     target = user or interaction.user
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -308,10 +313,11 @@ async def points(interaction: discord.Interaction, user: discord.Member = None):
     embed.add_field(name="🎥 الفيديوهات", value=f"**{vids}** فيديو\n(`{mins}` دقيقة)", inline=True)
     embed.set_footer(text=interaction.guild.name, icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
 
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="leaderboard", description="🏆 عرض قائمة صدارة الأعضاء الأعلى نقاطاً")
 async def leaderboard(interaction: discord.Interaction):
+    await interaction.response.defer()
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("SELECT user_id, points FROM user_points WHERE guild_id = ? ORDER BY points DESC LIMIT 10", (interaction.guild_id,))
@@ -319,7 +325,7 @@ async def leaderboard(interaction: discord.Interaction):
     conn.close()
 
     if not rows:
-        await interaction.response.send_message("❌ لا توجد بيانات نقاط حتى الآن في هذا السيرفر.")
+        await interaction.followup.send("❌ لا توجد بيانات نقاط حتى الآن في هذا السيرفر.")
         return
 
     embed = discord.Embed(
@@ -341,11 +347,12 @@ async def leaderboard(interaction: discord.Interaction):
     embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
     embed.set_footer(text=f"طلب بواسطة: {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
 
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="reset_points", description="🔄 إعادة ضبط وتصفير النقاط")
 @app_commands.checks.has_permissions(administrator=True)
 async def reset_points(interaction: discord.Interaction, target_user: discord.Member = None):
+    await interaction.response.defer()
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
@@ -364,7 +371,7 @@ async def reset_points(interaction: discord.Interaction, target_user: discord.Me
         description=msg,
         color=discord.Color.red()
     )
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 
 if __name__ == "__main__":
     TOKEN = os.getenv("DISCORD_TOKEN")
