@@ -131,36 +131,61 @@ async def on_message(message: discord.Message):
         return
 
     cfg = get_config(message.guild.id)
-    ch_ok = not cfg["allowed_channels"] or message.channel.id in cfg["allowed_channels"]
-    cat_ok = not cfg["allowed_categories"] or (message.channel.category_id and message.channel.category_id in cfg["allowed_categories"])
     
-    if not (ch_ok or cat_ok):
+    # فحص القنوات والكتاتوجري المسموحة
+    has_channels = len(cfg["allowed_channels"]) > 0
+    has_categories = len(cfg["allowed_categories"]) > 0
+    
+    ch_ok = message.channel.id in cfg["allowed_channels"] if has_channels else False
+    cat_ok = (message.channel.category_id in cfg["allowed_categories"]) if (has_categories and message.channel.category_id) else False
+    
+    # إذا فيه رومات محددة ورومك مو منها، تجاهل الرسالة
+    if (has_channels or has_categories) and not (ch_ok or cat_ok):
         return
 
-    media_items = []
+    if not message.attachments:
+        await bot.process_commands(message)
+        return
+
+    total_pts = 0.0
+    imgs_count = 0
+    gifs_count = 0
+    vids_count = 0
+    total_secs = 0
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
     for attachment in message.attachments:
         content_type = attachment.content_type or ""
         filename = attachment.filename.lower()
 
+        m_type = None
+        pts = 0.0
+        dur = 0
+
         if "image/gif" in content_type or filename.endswith('.gif'):
-            media_items.append(('gif', cfg["gif_points"], 0))
-        elif content_type.startswith("image/"):
-            media_items.append(('image', cfg["image_points"], 0))
+            m_type = 'gif'
+            pts = cfg["gif_points"]
+            gifs_count += 1
+        elif content_type.startswith("image/") or filename.endswith(('.png', '.jpg', '.jpeg', '.webp', '.heic')):
+            m_type = 'image'
+            pts = cfg["image_points"]
+            imgs_count += 1
         elif content_type.startswith("video/") or filename.endswith(('.mp4', '.mov', '.avi', '.mkv')):
-            duration = await get_video_duration(attachment.url)
-            pts = cfg["video_points"] + ((duration / 60.0) * cfg["video_minute_points"])
-            media_items.append(('video', pts, int(duration)))
+            m_type = 'video'
+            dur_float = await get_video_duration(attachment.url)
+            dur = int(dur_float)
+            pts = cfg["video_points"] + ((dur_float / 60.0) * cfg["video_minute_points"])
+            vids_count += 1
+            total_secs += dur
 
-    if media_items:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        
-        total_pts = sum(m[1] for m in media_items)
-        imgs = sum(1 for m in media_items if m[0] == 'image')
-        gifs = sum(1 for m in media_items if m[0] == 'gif')
-        vids = sum(1 for m in media_items if m[0] == 'video')
-        secs = sum(m[2] for m in media_items if m[0] == 'video')
+        if m_type:
+            total_pts += pts
+            c.execute("INSERT INTO tracked_messages VALUES (?, ?, ?, ?, ?, ?)",
+                      (message.id, message.guild.id, message.author.id, pts, m_type, dur))
 
+    if total_pts > 0:
         c.execute("""
             INSERT INTO user_points (guild_id, user_id, points, images_count, gifs_count, videos_count, video_seconds)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -170,15 +195,13 @@ async def on_message(message: discord.Message):
                 gifs_count = gifs_count + ?,
                 videos_count = videos_count + ?,
                 video_seconds = video_seconds + ?
-        """, (message.guild.id, message.author.id, total_pts, imgs, gifs, vids, secs,
-              total_pts, imgs, gifs, vids, secs))
+        """, (message.guild.id, message.author.id, total_pts, imgs_count, gifs_count, vids_count, total_secs,
+              total_pts, imgs_count, gifs_count, vids_count, total_secs))
+        
+        print(f"✅ Added {total_pts} points to user {message.author} for {len(message.attachments)} attachments.")
 
-        for m_type, pts, dur in media_items:
-            c.execute("INSERT INTO tracked_messages VALUES (?, ?, ?, ?, ?, ?)",
-                      (message.id, message.guild.id, message.author.id, pts, m_type, dur))
-
-        conn.commit()
-        conn.close()
+    conn.commit()
+    conn.close()
 
     await bot.process_commands(message)
 
