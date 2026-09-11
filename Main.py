@@ -9,6 +9,25 @@ import os
 import re
 from datetime import datetime, timezone
 from typing import Optional, List
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# === سيرفر خفيف لإعلام Render أن البوت يعمل ===
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is online!")
+
+def run_health_check_server():
+    port = int(os.environ.get("PORT", 10000))
+    httpd = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    httpd.serve_forever()
+
+threading.Thread(target=run_health_check_server, daemon=True).start()
+# ==============================================
+
+# كمل كود البوت الأساسي حقك هنا طبيعي جداً...
 
 intents = discord.Intents.default()
 intents.message_content = True
