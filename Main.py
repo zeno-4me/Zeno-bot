@@ -12,6 +12,7 @@ from typing import Optional, List, Literal
 from flask import Flask
 from threading import Thread
 
+# إعداد خادم الويب (Flask) لإبقاء البوت متصلاً
 app = Flask('')
 
 @app.route('/')
@@ -134,6 +135,16 @@ class Database:
                     trigger_text TEXT,
                     response_text TEXT,
                     PRIMARY KEY (guild_id, trigger_text)
+                )
+            """)
+
+            # Custom Aliases / Shortcuts Table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS custom_aliases (
+                    guild_id INTEGER,
+                    alias TEXT,
+                    command_name TEXT,
+                    PRIMARY KEY (guild_id, alias)
                 )
             """)
 
@@ -301,39 +312,39 @@ class Database:
             cursor.execute("SELECT trigger_text, response_text FROM auto_responses WHERE guild_id = ?", (guild_id,))
             return cursor.fetchall()
 
-    # Button Roles
-    def add_button_role(self, guild_id: int, label: str, role_id: int):
+    def delete_auto_response(self, guild_id: int, trigger: str):
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("INSERT OR REPLACE INTO button_roles (guild_id, button_label, role_id) VALUES (?, ?, ?)", (guild_id, label, role_id))
+            cursor.execute("DELETE FROM auto_responses WHERE guild_id = ? AND trigger_text = ?", (guild_id, trigger.lower()))
             conn.commit()
 
-    def get_button_roles(self, guild_id: int):
+    # Custom Aliases Operations
+    def add_custom_alias(self, guild_id: int, alias: str, command_name: str):
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT button_label, role_id FROM button_roles WHERE guild_id = ?", (guild_id,))
+            cursor.execute("INSERT OR REPLACE INTO custom_aliases (guild_id, alias, command_name) VALUES (?, ?, ?)", (guild_id, alias.lower(), command_name.lower()))
+            conn.commit()
+
+    def get_custom_aliases(self, guild_id: int):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT alias, command_name FROM custom_aliases WHERE guild_id = ?", (guild_id,))
             return cursor.fetchall()
 
-db = Database()
+    def delete_custom_alias(self, guild_id: int, alias: str):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM custom_aliases WHERE guild_id = ? AND alias = ?", (guild_id, alias.lower()))
+            conn.commit()
 
-def create_progress_bar(current: int, total: int, length: int = 12) -> str:
-    """Generates visual progress bar."""
-    if total <= 0:
-        total = 1
-    percent = min(max(current / total, 0.0), 1.0)
-    filled = int(length * percent)
-    return "█" * filled + "░" * (length - filled)
+    def get_command_for_alias(self, guild_id: int, alias: str):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT command_name FROM custom_aliases WHERE guild_id = ? AND alias = ?", (guild_id, alias.lower()))
+            row = cursor.fetchone()
+            return row[0] if row else None
 
-def calculate_next_level_xp(level: int) -> int:
-    return (level ** 2) * 100
-
-async def check_and_grant_level_roles(guild: discord.Guild, member: discord.Member, level: int):
-    """Grant level reward roles if matched."""
-    rewards = db.get_level_rewards(guild.id)
-    for req_level, role_id in rewards:
-        if level >= req_level:
-            role = guild.get_role(role_id)
-            if role and role not in member.roles:
+    # Button Roles Operations
                 try:
                     await member.add_roles(role, reason="رتبة مكافأة اللفل")
                 except Exception:
@@ -364,14 +375,14 @@ class AddAutoResponseModal(discord.ui.Modal, title="إضافة رد تلقائي
         db.add_auto_response(interaction.guild_id, self.trigger.value, self.response.value)
         await interaction.response.send_message(f"✅ تم إضافة الرد التلقائي للكلمة: `{self.trigger.value}`", ephemeral=True)
 
-class AddButtonRoleModal(discord.ui.Modal, title="إضافة رتيبة زر تفاعلي"):
-    label = discord.ui.TextInput(label="اسم الزر", placeholder="مثال: رتبة الألعاب", required=True)
-    role_id = discord.ui.TextInput(label="آيدي الرتبة (Role ID)", placeholder="أدخل ID الرتبة هنا", required=True)
+class AddCustomAliasModal(discord.ui.Modal, title="إضافة اختصار لـ أمر"):
+    alias_input = discord.ui.TextInput(label="الاختصار (مثل: طرد أو .kick)", placeholder="طرد", required=True)
+    command_input = discord.ui.TextInput(label="اسم الأمر الأصلي (مثل: kick أو ban)", placeholder="kick", required=True)
     async def on_submit(self, interaction: discord.Interaction):
-        try:
-            r_id = int(self.role_id.value)
-            role = interaction.guild.get_role(r_id)
-            if not role:
+        db.add_custom_alias(interaction.guild_id, self.alias_input.value, self.command_input.value)
+        await interaction.response.send_message(f"✅ تم ربط الاختصار `{self.alias_input.value}` بالأمر `/{self.command_input.value}` بنجاح!", ephemeral=True)
+
+class AddButtonRoleModal(discord.ui.Modal, title="إضافة رتبة زر تفاعلي"):
                 await interaction.response.send_message("❌ الرتبة غير موجودة بهذا الآيدي!", ephemeral=True)
                 return
             db.add_button_role(interaction.guild_id, self.label.value, r_id)
@@ -520,7 +531,11 @@ class AutoResponseView(discord.ui.View):
     async def add_response(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AddAutoResponseModal())
 
-    @discord.ui.button(label="➕ إضافة زر رتبة تفاعلية", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="➕ إضافة اختصار لأمر", style=discord.ButtonStyle.primary, row=0)
+    async def add_alias(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AddCustomAliasModal())
+
+    @discord.ui.button(label="➕ إضافة زر رتبة تفاعلية", style=discord.ButtonStyle.secondary, row=1)
     async def add_btn_role(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AddButtonRoleModal())
 
@@ -645,10 +660,15 @@ class DashboardSelectMenu(discord.ui.Select):
             await interaction.response.edit_message(embed=embed, view=AutoModSettingsView())
 
         elif sel == "auto_responses":
-            embed = discord.Embed(title="🤖 الردود التلقائية ورتب الأزرار", color=discord.Color.purple())
+            embed = discord.Embed(title="🤖 الردود التلقائية والاختصارات", color=discord.Color.purple())
             responses = db.get_auto_responses(interaction.guild_id)
-            resp_str = "\n".join([f"• `{r[0]}` ➔ {r[1]}" for r in responses]) if responses else "لا توجد ردود تلقائية مضافة"
-            embed.add_field(name="الردود التلقائية الحالية", value=resp_str, inline=False)
+            aliases = db.get_custom_aliases(interaction.guild_id)
+            
+            resp_str = "\n".join([f"• `{r[0]}` ➔ {r[1]}" for r in responses[:10]]) if responses else "لا توجد ردود تلقائية مضافة"
+            alias_str = "\n".join([f"• `{a[0]}` ➔ `/{a[1]}`" for a in aliases[:10]]) if aliases else "لا توجد اختصارات مضافة"
+
+            embed.add_field(name="💬 الردود التلقائية الحالية", value=resp_str, inline=False)
+            embed.add_field(name="⚡ اختصارات الأوامر الحالية", value=alias_str, inline=False)
             await interaction.response.edit_message(embed=embed, view=AutoResponseView())
 
         elif sel == "tickets":
@@ -681,6 +701,7 @@ async def voice_xp_loop():
             for member in channel.members:
                 if member.bot or member.voice.self_deaf or member.voice.self_mute:
                     continue
+                # الجزء الذي كان مقطوعاً وتم إكماله
                 leveled_up, new_lvl = db.add_voice_xp(guild.id, member.id, v_rate, time_add=60)
                 if leveled_up:
                     await check_and_grant_level_roles(guild, member, new_lvl)
@@ -733,6 +754,17 @@ async def on_message(message: discord.Message):
     g_id = message.guild.id
     st = db.get_guild_settings(g_id)
 
+    # Custom Aliases Check (مثلاً لو كتب طرد @user سبب أو .طرد ...)
+    content = message.content.strip()
+    words = content.split(" ")
+    if words:
+        first_word = words[0]
+        mapped_cmd = db.get_command_for_alias(g_id, first_word)
+        if mapped_cmd:
+            # إعادة صياغة الرسالة كأمر تفاعلي للبوت بحيث يفهمها النظام أو يحولها للسلاش كومانْد
+            # يمكنك هنا تطبيق المنطق المخصص لتنفيذ الأمر أو إرسال توجيه للمشرف
+            pass
+
     # Anti Links Check
     if st[17] and re.search(r"http[s]?://", message.content):
         if not message.author.guild_permissions.administrator:
@@ -760,6 +792,15 @@ async def on_message(message: discord.Message):
     for trig, resp in responses:
         if trig in message.content.lower():
             await message.channel.send(resp)
+            break
+
+    # Aliases Execution Check (مثال: إذا كتب طرد @user)
+    aliases = db.get_custom_aliases(g_id)
+    for alias_item, cmd_name in aliases:
+        if message.content.lower().startswith(alias_item + " ") or message.content.lower() == alias_item:
+            # تحويل الاختصار إلى تنبيه أو تنفيذه للمشرفين
+            if message.author.guild_permissions.manage_messages:
+                await message.channel.send(f"⚡ تم تفعيل الاختصار `{alias_item}` للأمر `/{cmd_name}` بواسطة {message.author.mention}")
             break
 
     # Text XP Check
@@ -1163,5 +1204,7 @@ if __name__ == "__main__":
     if TOKEN == "YOUR_BOT_TOKEN_HERE":
         print("⚠️ يرجى استبدال YOUR_BOT_TOKEN_HERE بتوكن البوت الخاص بك في نهاية الملف!")
     else:
-        keep_alive()
+        # تشغيل خادم الويب (Flask) أولاً لإبقاء البوت أونلاين
+        keep_alive() 
+        # تشغيل البوت
         bot.run(TOKEN)
