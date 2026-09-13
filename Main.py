@@ -9,6 +9,23 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Literal
+from flask import Flask
+from threading import Thread
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "البوت شغال!"
+
+def run():
+    # ريندر يحدد المنفذ تلقائياً
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
 # Initialize Discord Intents
 intents = discord.Intents.default()
@@ -1146,4 +1163,5 @@ if __name__ == "__main__":
     if TOKEN == "YOUR_BOT_TOKEN_HERE":
         print("⚠️ يرجى استبدال YOUR_BOT_TOKEN_HERE بتوكن البوت الخاص بك في نهاية الملف!")
     else:
+        keep_alive()
         bot.run(TOKEN)
