@@ -346,9 +346,9 @@ class Database:
 
     # Button Roles Operations
             try:
-                    await member.add_roles(role, reason="رتبة مكافأة اللفل")
+                await member.add_roles(role, reason="رتبة مكافأة اللفل")
                 except Exception:
-                    pass
+                pass
 
 class EditWelcomeModal(discord.ui.Modal, title="تعديل رسالة الترحيب"):
     welcome_msg = discord.ui.TextInput(label="رسالة الترحيب", style=discord.TextStyle.paragraph, placeholder="مرحباً بك {user} في سيرفر {server}!", required=True)
