@@ -19,7 +19,7 @@ app = Flask('')
 def home():
     return "البوت شغال!"
 
-def run():get_economy_data
+def run():
     # ريندر يحدد المنفذ تلقائياً
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
@@ -268,7 +268,7 @@ class Database:
             return row
 
     def update_credits(self, guild_id: int, user_id: int, amount: int):
-        data = self.(guild_id, user_id)
+        data = self.get_economy_data(guild_id, user_id)
         new_credits = max(0, data[2] + amount)
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -345,6 +345,34 @@ class Database:
             return row[0] if row else None
 
     # Button Roles Operations
+    def add_button_role(self, guild_id: int, button_label: str, role_id: int):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR REPLACE INTO button_roles (guild_id, button_label, role_id) VALUES (?, ?, ?)", (guild_id, button_label, role_id))
+            conn.commit()
+
+    def get_button_roles(self, guild_id: int):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT button_label, role_id FROM button_roles WHERE guild_id = ?", (guild_id,))
+            return cursor.fetchall()
+
+db = Database()
+
+def calculate_next_level_xp(level: int) -> int:
+    return (level ** 2) * 100
+
+def create_progress_bar(current: int, total: int, length: int = 10) -> str:
+    percentage = min(1.0, max(0.0, current / total))
+    filled = int(percentage * length)
+    return "█" * filled + "░" * (length - filled)
+
+async def check_and_grant_level_roles(guild: discord.Guild, member: discord.Member, new_level: int):
+    rewards = db.get_level_rewards(guild.id)
+    for lvl, role_id in rewards:
+        if new_level >= lvl:
+            role = guild.get_role(role_id)
+            if role and role not in member.roles:
                 try:
                     await member.add_roles(role, reason="رتبة مكافأة اللفل")
                 except Exception:
@@ -383,6 +411,14 @@ class AddCustomAliasModal(discord.ui.Modal, title="إضافة اختصار لـ 
         await interaction.response.send_message(f"✅ تم ربط الاختصار `{self.alias_input.value}` بالأمر `/{self.command_input.value}` بنجاح!", ephemeral=True)
 
 class AddButtonRoleModal(discord.ui.Modal, title="إضافة رتبة زر تفاعلي"):
+    label = discord.ui.TextInput(label="اسم الزر", placeholder="مثال: VIP", required=True)
+    role_id_input = discord.ui.TextInput(label="آيدي الرتبة (Role ID)", placeholder="123456789...", required=True)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            r_id = int(self.role_id_input.value)
+            role = interaction.guild.get_role(r_id)
+            if not role:
                 await interaction.response.send_message("❌ الرتبة غير موجودة بهذا الآيدي!", ephemeral=True)
                 return
             db.add_button_role(interaction.guild_id, self.label.value, r_id)
@@ -701,7 +737,6 @@ async def voice_xp_loop():
             for member in channel.members:
                 if member.bot or member.voice.self_deaf or member.voice.self_mute:
                     continue
-                # الجزء الذي كان مقطوعاً وتم إكماله
                 leveled_up, new_lvl = db.add_voice_xp(guild.id, member.id, v_rate, time_add=60)
                 if leveled_up:
                     await check_and_grant_level_roles(guild, member, new_lvl)
@@ -754,15 +789,13 @@ async def on_message(message: discord.Message):
     g_id = message.guild.id
     st = db.get_guild_settings(g_id)
 
-    # Custom Aliases Check (مثلاً لو كتب طرد @user سبب أو .طرد ...)
+    # Custom Aliases Check
     content = message.content.strip()
     words = content.split(" ")
     if words:
         first_word = words[0]
         mapped_cmd = db.get_command_for_alias(g_id, first_word)
         if mapped_cmd:
-            # إعادة صياغة الرسالة كأمر تفاعلي للبوت بحيث يفهمها النظام أو يحولها للسلاش كومانْد
-            # يمكنك هنا تطبيق المنطق المخصص لتنفيذ الأمر أو إرسال توجيه للمشرف
             pass
 
     # Anti Links Check
@@ -794,11 +827,10 @@ async def on_message(message: discord.Message):
             await message.channel.send(resp)
             break
 
-    # Aliases Execution Check (مثال: إذا كتب طرد @user)
+    # Aliases Execution Check
     aliases = db.get_custom_aliases(g_id)
     for alias_item, cmd_name in aliases:
         if message.content.lower().startswith(alias_item + " ") or message.content.lower() == alias_item:
-            # تحويل الاختصار إلى تنبيه أو تنفيذه للمشرفين
             if message.author.guild_permissions.manage_messages:
                 await message.channel.send(f"⚡ تم تفعيل الاختصار `{alias_item}` للأمر `/{cmd_name}` بواسطة {message.author.mention}")
             break
@@ -830,7 +862,6 @@ async def channel_age(interaction: discord.Interaction, target: Optional[discord
     target_channel = target or interaction.channel
     
     try:
-        # إذا كان الهدف عبارة عن كاتيجوري (Category)، نقوم بتعديل كل الرومات داخله
         if isinstance(target_channel, discord.CategoryChannel):
             await interaction.response.defer()
             count = 0
@@ -842,7 +873,6 @@ async def channel_age(interaction: discord.Interaction, target: Optional[discord
             state_text = "مقيدة عمرياً 🔞 (Age-Restricted)" if restricted else "عادية 🟢"
             await interaction.followup.send(f"✅ تم بنجاح تغيير إعدادات `{count}` رومات داخل الكاتيجوري **{target_channel.name}** لتصبح {state_text}!")
         
-        # إذا كان الهدف روم عادي (Text/Voice/Forum)
         else:
             if not hasattr(target_channel, 'nsfw'):
                 await interaction.response.send_message("❌ هذا النوع من الرومات لا يدعم خاصية التقييد العمري.", ephemeral=True)
@@ -864,7 +894,6 @@ async def channel_age(interaction: discord.Interaction, target: Optional[discord
             await interaction.followup.send(msg, ephemeral=True)
         else:
             await interaction.response.send_message(msg, ephemeral=True)
-
 
 @bot.tree.command(name="ban", description="حظر عضو من السيرفر")
 @app_commands.checks.has_permissions(ban_members=True)
@@ -1204,7 +1233,5 @@ if __name__ == "__main__":
     if TOKEN == "YOUR_BOT_TOKEN_HERE":
         print("⚠️ يرجى استبدال YOUR_BOT_TOKEN_HERE بتوكن البوت الخاص بك في نهاية الملف!")
     else:
-        # تشغيل خادم الويب (Flask) أولاً لإبقاء البوت أونلاين
         keep_alive() 
-        # تشغيل البوت
         bot.run(TOKEN)
