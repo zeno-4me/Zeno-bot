@@ -345,7 +345,7 @@ class Database:
             return row[0] if row else None
 
     # Button Roles Operations
-                try:
+            try:
                     await member.add_roles(role, reason="رتبة مكافأة اللفل")
                 except Exception:
                     pass
