@@ -759,6 +759,55 @@ async def on_message(message: discord.Message):
 
     await bot.process_commands(message)
 
+channel_group = app_commands.Group(name="channel", description="أوامر إدارة القنوات والفئات (Categories)")
+bot.tree.add_command(channel_group)
+
+@channel_group.command(name="age", description="تغيير إعدادات الروم أو الكاتيجوري إلى مقيدة عمرياً (Age-Restricted)")
+@app_commands.describe(
+    target="الروم أو الكاتيجوري المراد تعديله (اتركه فارغاً لتعديل الروم الحالي)",
+    restricted="اختر True لجعلها مقيدة عمرياً (NSFW) أو False لجعلها عادية"
+)
+@app_commands.checks.has_permissions(manage_channels=True)
+async def channel_age(interaction: discord.Interaction, target: Optional[discord.abc.GuildChannel] = None, restricted: bool = True):
+    target_channel = target or interaction.channel
+    
+    try:
+        # إذا كان الهدف عبارة عن كاتيجوري (Category)، نقوم بتعديل كل الرومات داخله
+        if isinstance(target_channel, discord.CategoryChannel):
+            await interaction.response.defer()
+            count = 0
+            for ch in target_channel.channels:
+                if hasattr(ch, 'edit') and hasattr(ch, 'nsfw'):
+                    await ch.edit(nsfw=restricted)
+                    count += 1
+            
+            state_text = "مقيدة عمرياً 🔞 (Age-Restricted)" if restricted else "عادية 🟢"
+            await interaction.followup.send(f"✅ تم بنجاح تغيير إعدادات `{count}` رومات داخل الكاتيجوري **{target_channel.name}** لتصبح {state_text}!")
+        
+        # إذا كان الهدف روم عادي (Text/Voice/Forum)
+        else:
+            if not hasattr(target_channel, 'nsfw'):
+                await interaction.response.send_message("❌ هذا النوع من الرومات لا يدعم خاصية التقييد العمري.", ephemeral=True)
+                return
+                
+            await target_channel.edit(nsfw=restricted)
+            state_text = "مقيدة عمرياً 🔞 (Age-Restricted)" if restricted else "عادية 🟢"
+            await interaction.response.send_message(f"✅ تم تغيير إعدادات الروم {target_channel.mention} لتصبح {state_text}!")
+            
+    except discord.Forbidden:
+        msg = "❌ البوت لا يمتلك صلاحيات كافية لتعديل إعدادات هذه القناة!"
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except Exception as e:
+        msg = f"❌ حدث خطأ غير متوقع: {e}"
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+
+
 @bot.tree.command(name="ban", description="حظر عضو من السيرفر")
 @app_commands.checks.has_permissions(ban_members=True)
 async def ban(interaction: discord.Interaction, member: discord.Member, reason: Optional[str] = "لا يوجد سبب"):
