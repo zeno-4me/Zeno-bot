@@ -344,11 +344,48 @@ class Database:
             row = cursor.fetchone()
             return row[0] if row else None
 
-    # Button Roles Operations
-            try:
-                await member.add_roles(role, reason="رتبة مكافأة اللفل")
-                except Exception:
-                pass
+    # Button Roles Operationsclass AddButtonRoleModal(discord.ui.Modal, title="إضافة رتبة زر تفاعلي"):
+    label = discord.ui.TextInput(
+        label="اسم الزر",
+        placeholder="مثال: ألعاب",
+        required=True,
+        max_length=80
+    )
+
+    role_id = discord.ui.TextInput(
+        label="آيدي الرتبة",
+        placeholder="ضع آيدي الرتبة هنا",
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            r_id = int(self.role_id.value)
+            role = interaction.guild.get_role(r_id)
+
+            if role is None:
+                await interaction.response.send_message(
+                    "❌ الرتبة غير موجودة بهذا الآيدي!",
+                    ephemeral=True
+                )
+                return
+
+            db.add_button_role(
+                interaction.guild_id,
+                self.label.value,
+                r_id
+            )
+
+            await interaction.response.send_message(
+                f"✅ تم ربط الزر `{self.label.value}` بالرتبة {role.mention}!",
+                ephemeral=True
+            )
+
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ يرجى إدخال آيدي صحيح!",
+                ephemeral=True
+            )
 
 class EditWelcomeModal(discord.ui.Modal, title="تعديل رسالة الترحيب"):
     welcome_msg = discord.ui.TextInput(label="رسالة الترحيب", style=discord.TextStyle.paragraph, placeholder="مرحباً بك {user} في سيرفر {server}!", required=True)
