@@ -365,7 +365,7 @@ def calculate_next_level_xp(level: int) -> int:
 def create_progress_bar(current: int, total: int, length: int = 10) -> str:
     percentage = min(1.0, max(0.0, current / total))
     filled = int(percentage * length)
-    return "█" * filled + "░" * (length - filled)
+    return "■" * filled + "□" * (length - filled)
 
 async def check_and_grant_level_roles(guild: discord.Guild, member: discord.Member, new_level: int):
     rewards = db.get_level_rewards(guild.id)
@@ -397,7 +397,7 @@ class EditBadwordsModal(discord.ui.Modal, title="إدارة الكلمات ال�
         await interaction.response.send_message("✅ تم حفظ قائمة الكلمات الممنوعة!", ephemeral=True)
 
 class AddAutoResponseModal(discord.ui.Modal, title="إضافة رد تلقائي"):
-    trigger = discord.ui.TextInput(label="الكلمة أو الجملة المفتاحية", placeholder="مثال: السلام عليكم", required=True)
+    trigger = discord.ui.TextInput(label="جملة المستخدم", placeholder="مثال: السلام عليكم", required=True)
     response = discord.ui.TextInput(label="رد البوت التلقائي", style=discord.TextStyle.paragraph, placeholder="وعليكم السلام ورحمة الله وبركاته", required=True)
     async def on_submit(self, interaction: discord.Interaction):
         db.add_auto_response(interaction.guild_id, self.trigger.value, self.response.value)
@@ -439,7 +439,7 @@ class ChangeXPRatesModal(discord.ui.Modal, title="تعديل معدل الـ XP"
         except ValueError:
             await interaction.response.send_message("❌ يرجى كتابة أرقام صحيحة!", ephemeral=True)
 
-class EmbedBuilderModal(discord.ui.Modal, title="منشئ الرسائل والمطبوعات (Embed Creator)"):
+class EmbedBuilderModal(discord.ui.Modal, title="منشئ رسائل الإمبد (Embed Creator)"):
     title_input = discord.ui.TextInput(label="عنوان الإمبد", placeholder="اكتب العنوان هنا...", required=True)
     description_input = discord.ui.TextInput(label="محتوى الرسالة", style=discord.TextStyle.paragraph, placeholder="اكتب النص هنا...", required=True)
     color_input = discord.ui.TextInput(label="رمز اللون (Hex Code)", placeholder="#3498db أو اتركه فارغاً", required=False)
@@ -492,7 +492,7 @@ class DynamicRoleButton(discord.ui.Button):
 
         if role in interaction.user.roles:
             await interaction.user.remove_roles(role)
-            await interaction.response.send_message(f"➖ تم إزالة الرتبة {role.mention} منك!", ephemeral=True)
+            await interaction.response.send_message(f"➖ تم إزالة الرتبة {role.mention} بنجاح!", ephemeral=True)
         else:
             await interaction.user.add_roles(role)
             await interaction.response.send_message(f"➕ تم إعطاؤك الرتبة {role.mention} بنجاح!", ephemeral=True)
@@ -512,17 +512,17 @@ class GeneralSettingsView(discord.ui.View):
         self.add_item(ChannelSelectMenu("log_channel_id", "📜 اختر قناة السجلات (Logs)..."))
         self.add_item(RoleSelectMenu("auto_role_id", "🎖️ اختر الرتبة التلقائية للأعضاء الجدد..."))
 
-    @discord.ui.button(label="تعديل نص الترحيب", style=discord.ButtonStyle.primary, row=4)
+    @discord.ui.button(label="تعديل رسالة الترحيب", style=discord.ButtonStyle.primary, row=4)
     async def edit_welcome(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditWelcomeModal())
 
-    @discord.ui.button(label="تعديل نص المغادرة", style=discord.ButtonStyle.primary, row=4)
+    @discord.ui.button(label="تعديل رسالة المغادرة", style=discord.ButtonStyle.primary, row=4)
     async def edit_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditLeaveModal())
 
-    @discord.ui.button(label="الرجوع للرئيسية", style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label="الرجوع للصفحة للرئيسية", style=discord.ButtonStyle.secondary, row=4)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به بالكامل دون استخدام أي موقع!", color=discord.Color.blurple())
+        embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=MainDashboardView())
 
 class AutoModSettingsView(discord.ui.View):
@@ -554,9 +554,9 @@ class AutoModSettingsView(discord.ui.View):
     async def edit_words(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditBadwordsModal())
 
-    @discord.ui.button(label="الرجوع للرئيسية", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="الرجوع للصفحة الرئيسية", style=discord.ButtonStyle.secondary, row=1)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به بالكامل دون استخدام أي موقع!", color=discord.Color.blurple())
+        embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=MainDashboardView())
 
 class AutoResponseView(discord.ui.View):
@@ -585,9 +585,9 @@ class AutoResponseView(discord.ui.View):
         await interaction.channel.send(embed=embed, view=view)
         await interaction.response.send_message("✅ تم نشر بنل الرتب التفاعلية!", ephemeral=True)
 
-    @discord.ui.button(label="الرجوع للرئيسية", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="الرجوع للصفحة الرئيسية", style=discord.ButtonStyle.secondary, row=1)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به بالكامل دون استخدام أي موقع!", color=discord.Color.blurple())
+        embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=MainDashboardView())
 
 class TicketSettingsView(discord.ui.View):
@@ -600,15 +600,15 @@ class TicketSettingsView(discord.ui.View):
     async def deploy_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
             title="🎟️ قسم الدعم الفني والمساعدة",
-            description="اضغط على الزر أدناه لفتح تذكرة خاصة والتواصل مباشرة مع فريق الإدارة والدعم الفني.",
+            description="اضغط على الزر أدناه لفتح التذكرة.",
             color=discord.Color.green()
         )
         await interaction.channel.send(embed=embed, view=OpenTicketView())
         await interaction.response.send_message("✅ تم نشر بنل التذاكر بنجاح!", ephemeral=True)
 
-    @discord.ui.button(label="الرجوع للرئيسية", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="الرجوع للصفحه الرئيسية", style=discord.ButtonStyle.secondary, row=2)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به بالكامل دون استخدام أي موقع!", color=discord.Color.blurple())
+        embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=MainDashboardView())
 
 class OpenTicketView(discord.ui.View):
@@ -633,7 +633,7 @@ class OpenTicketView(discord.ui.View):
             overwrites[support_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
         channel = await guild.create_text_channel(name=f"ticket-{interaction.user.name}", category=category, overwrites=overwrites)
-        embed = discord.Embed(title=f"🎟️ تذكرة الدعم - {interaction.user.display_name}", description="مرحباً بك! تفضل بكتابة استفسارك وسيتم الرد عليك فوراً.", color=discord.Color.blue())
+        embed = discord.Embed(title=f"🎟️ تذكرة الدعم - {interaction.user.display_name}", description="مرحباً بك! تفضل بكتابة استفسارك وسيتم الرد عليك باسرع وقت ممكن.", color=discord.Color.blue())
         await channel.send(content=f"{interaction.user.mention} {support_role.mention if support_role else ''}", embed=embed, view=CloseTicketView())
         await interaction.response.send_message(f"✅ تم إنشاء تذكرتك بنجاح: {channel.mention}", ephemeral=True)
 
@@ -1091,7 +1091,7 @@ async def rep(interaction: discord.Interaction, member: discord.Member):
     db.add_rep(interaction.guild_id, member.id, interaction.user.id)
     await interaction.response.send_message(f"🌟 قام {interaction.user.mention} بإعطاء نقطة سمعة (+1 Rep) إلى {member.mention}!")
 
-@bot.tree.command(name="title", description="كتابة وتغيير اللقب الشرفي الذي يظهر في بروفايلك")
+@bot.tree.command(name="title", description="كتابة وتغيير اللقب الذي يظهر في بروفايلك")
 async def title(interaction: discord.Interaction, text: str):
     if len(text) > 30:
         await interaction.response.send_message("❌ اللقب يتجاوز الحد المسموح (30 حرف)!", ephemeral=True)
@@ -1182,7 +1182,7 @@ async def banner(interaction: discord.Interaction, member: Optional[discord.Memb
     target = member or interaction.user
     fetched_user = await bot.fetch_user(target.id)
     if not fetched_user.banner:
-        await interaction.response.send_message("❌ هذا الحساب ليس لديه صورة بانر خلفية!", ephemeral=True)
+        await interaction.response.send_message("❌ هذا الحساب ليس لديه صورة بانر!", ephemeral=True)
         return
     embed = discord.Embed(title=f"🎨 صورة البانر - {target.display_name}", color=discord.Color.purple())
     embed.set_image(url=fetched_user.banner.url)
@@ -1202,9 +1202,9 @@ async def ping(interaction: discord.Interaction):
 
 @bot.tree.command(name="bot", description="عرض معلومات وإحصائيات البوت")
 async def bot_info(interaction: discord.Interaction):
-    embed = discord.Embed(title="🤖 معلومات البوت الخاص بك", description="بوت متكامل ومخصص بأسلوب برو بوت بريميوم مع لوحة تحكم داخلية كاملة.", color=discord.Color.gold())
+    embed = discord.Embed(title="🤖 معلومات البوت الخاص بك", description="بوت متكامل ومخصص بأسلوب راقي مع لوحة تحكم داخلية كاملة.", color=discord.Color.gold())
     embed.add_field(name="السيرفرات المتصلة", value=f"`{len(bot.guilds)}`", inline=True)
-    embed.add_field(name="مكتبة التشغيل", value="`discord.py v2.x`", inline=True)
+    embed.add_field(name="مكتبة التشغيل", value="ما اتوقع انك مهتم", inline=True)
     embed.add_field(name="نظام التلفيل", value="كتابي + صوتي مفعل", inline=True)
     await interaction.response.send_message(embed=embed)
 
@@ -1217,12 +1217,12 @@ async def poll(interaction: discord.Interaction, question: str):
     await msg.add_reaction("👍")
     await msg.add_reaction("👎")
 
-@bot.tree.command(name="dashboard", description="فتح لوحة تحكم السيرفر الشاملة والتفاعلية (ProBot Style)")
+@bot.tree.command(name="dashboard", description="فتح لوحة تحكم السيرفر الشاملة لاغلب ضروريات البوت")
 @app_commands.checks.has_permissions(administrator=True)
 async def dashboard(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="⚙️ لوحة تحكم السيرفر الشاملة (ProBot Dashboard)",
-        description="اختر القسم الذي تريد تعديله من القائمة المنسدلة أدناه للتحكم الكامل بسيرفرك بدون موقع!",
+        title="⚙️ لوحة تحكم السيرفر الشاملة",
+        description="اختر القسم الذي تريد تعديله من القائمة المستطيلة للتحكم الكامل بسيرفرك بدون مواقع خارجية!",
         color=discord.Color.blurple()
     )
     view = MainDashboardView()
