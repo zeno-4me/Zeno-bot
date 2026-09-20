@@ -439,25 +439,93 @@ class ChangeXPRatesModal(discord.ui.Modal, title="تعديل معدل الـ XP"
         except ValueError:
             await interaction.response.send_message("❌ يرجى كتابة أرقام صحيحة!", ephemeral=True)
 
-class EmbedBuilderModal(discord.ui.Modal, title="منشئ رسائل الإمبد (Embed Creator)"):
-    title_input = discord.ui.TextInput(label="عنوان الإمبد", placeholder="اكتب العنوان هنا...", required=True)
-    description_input = discord.ui.TextInput(label="محتوى الرسالة", style=discord.TextStyle.paragraph, placeholder="اكتب النص هنا...", required=True)
-    color_input = discord.ui.TextInput(label="رمز اللون (Hex Code)", placeholder="#3498db أو اتركه فارغاً", required=False)
-    image_input = discord.ui.TextInput(label="رابط صورة كبيرة (URL)", placeholder="https://...", required=False)
+# ----------------- بدايات دوال الإمبد المتقدم -----------------
+class EmbedBasicsModal(discord.ui.Modal, title="تعديل أساسيات الإمبد (النص واللون)"):
+    e_title = discord.ui.TextInput(label="العنوان", required=False, placeholder="عنوان الإمبد...")
+    e_desc = discord.ui.TextInput(label="الوصف", style=discord.TextStyle.paragraph, required=True, placeholder="اكتب محتوى الإمبد هنا...")
+    e_color = discord.ui.TextInput(label="اللون (Hex Code)", required=False, placeholder="#3498db أو اترك فارغاً")
+
+    def __init__(self, embed: discord.Embed, view: discord.ui.View):
+        super().__init__()
+        self.embed = embed
+        self.embed_view = view
+        if embed.title: self.e_title.default = embed.title
+        if embed.description: self.e_desc.default = embed.description
 
     async def on_submit(self, interaction: discord.Interaction):
-        color_val = discord.Color.blue()
-        if self.color_input.value.startswith("#"):
+        self.embed.title = self.e_title.value
+        self.embed.description = self.e_desc.value
+        if self.e_color.value:
             try:
-                color_val = discord.Color(int(self.color_input.value.replace("#", ""), 16))
-            except Exception:
-                pass
-        embed = discord.Embed(title=self.title_input.value, description=self.description_input.value, color=color_val)
-        if self.image_input.value and self.image_input.value.startswith("http"):
-            embed.set_image(url=self.image_input.value)
-        embed.set_footer(text=f"تم الإرسال بواسطة: {interaction.user.display_name}")
-        await interaction.channel.send(embed=embed)
-        await interaction.response.send_message("✅ تم إنشاء وإرسال الإمبد في هذه القناة بنجاح!", ephemeral=True)
+                self.embed.color = discord.Color(int(self.e_color.value.replace("#", ""), 16))
+            except: pass
+        await interaction.response.edit_message(embed=self.embed, view=self.embed_view)
+
+class EmbedImagesModal(discord.ui.Modal, title="تعديل الصور والروابط"):
+    e_img = discord.ui.TextInput(label="رابط الصورة الكبيرة (URL)", required=False, placeholder="https://...")
+    e_thumb = discord.ui.TextInput(label="رابط الصورة المصغرة الجانبية (URL)", required=False, placeholder="https://...")
+
+    def __init__(self, embed: discord.Embed, view: discord.ui.View):
+        super().__init__()
+        self.embed = embed
+        self.embed_view = view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if self.e_img.value.startswith("http"): self.embed.set_image(url=self.e_img.value)
+        else: self.embed.set_image(url=None)
+        
+        if self.e_thumb.value.startswith("http"): self.embed.set_thumbnail(url=self.e_thumb.value)
+        else: self.embed.set_thumbnail(url=None)
+        
+        await interaction.response.edit_message(embed=self.embed, view=self.embed_view)
+
+class EmbedFooterModal(discord.ui.Modal, title="تعديل الفوتر والمؤلف"):
+    e_author = discord.ui.TextInput(label="اسم المؤلف (Author)", required=False, placeholder="اكتب الاسم هنا...")
+    e_footer = discord.ui.TextInput(label="نص التذييل (Footer)", required=False, placeholder="نص صغير أسفل الرسالة...")
+
+    def __init__(self, embed: discord.Embed, view: discord.ui.View):
+        super().__init__()
+        self.embed = embed
+        self.embed_view = view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if self.e_author.value: self.embed.set_author(name=self.e_author.value)
+        else: self.embed.remove_author()
+        
+        if self.e_footer.value: self.embed.set_footer(text=self.e_footer.value)
+        else: self.embed.remove_footer()
+        
+        await interaction.response.edit_message(embed=self.embed, view=self.embed_view)
+
+class AdvancedEmbedBuilderView(discord.ui.View):
+    def __init__(self, author: discord.Member):
+        super().__init__(timeout=300)
+        self.author = author
+        self.current_embed = discord.Embed(description="أهلاً بك في صانع الإمبد المتقدم!\nاضغط على الأزرار في الأسفل لتعديل أي جزء تفصيلي في هذه الرسالة.", color=discord.Color.blurple())
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user != self.author:
+            await interaction.response.send_message("❌ هذه القائمة ليست لك!", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="📝 تعديل الأساسيات", style=discord.ButtonStyle.primary, row=0)
+    async def edit_basics(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(EmbedBasicsModal(self.current_embed, self))
+
+    @discord.ui.button(label="🖼️ تعديل الصور", style=discord.ButtonStyle.secondary, row=0)
+    async def edit_images(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(EmbedImagesModal(self.current_embed, self))
+
+    @discord.ui.button(label="🏷️ تعديل الفوتر", style=discord.ButtonStyle.secondary, row=0)
+    async def edit_footer(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(EmbedFooterModal(self.current_embed, self))
+
+    @discord.ui.button(label="✅ إرسال الإمبد الآن!", style=discord.ButtonStyle.success, row=1)
+    async def send_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.channel.send(embed=self.current_embed)
+        await interaction.message.delete()
+# ----------------- نهاية دوال الإمبد المتقدم -----------------
 
 class ChannelSelectMenu(discord.ui.ChannelSelect):
     def __init__(self, setting_key: str, placeholder_text: str, channel_types=None):
@@ -468,6 +536,16 @@ class ChannelSelectMenu(discord.ui.ChannelSelect):
         channel = self.values[0]
         db.update_guild_setting(interaction.guild_id, self.setting_key, channel.id)
         await interaction.response.send_message(f"✅ تم تحديد القناة: {channel.mention}", ephemeral=True)
+
+class CategorySelectMenu(discord.ui.ChannelSelect):
+    def __init__(self, setting_key: str, placeholder_text: str):
+        self.setting_key = setting_key
+        super().__init__(placeholder=placeholder_text, channel_types=[discord.ChannelType.category], min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        category = self.values[0]
+        db.update_guild_setting(interaction.guild_id, self.setting_key, category.id)
+        await interaction.response.send_message(f"✅ تم تحديد الفئة (Category): **{category.name}**", ephemeral=True)
 
 class RoleSelectMenu(discord.ui.RoleSelect):
     def __init__(self, setting_key: str, placeholder_text: str):
@@ -590,9 +668,24 @@ class AutoResponseView(discord.ui.View):
         embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=MainDashboardView())
 
+class XPSettingsView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(ChannelSelectMenu("level_up_channel_id", "🎉 اختر قناة إرسال تنبيهات اللفل..."))
+
+    @discord.ui.button(label="تعديل معدل الـ XP", style=discord.ButtonStyle.primary, row=1)
+    async def edit_rates(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ChangeXPRatesModal())
+
+    @discord.ui.button(label="الرجوع للصفحة الرئيسية", style=discord.ButtonStyle.secondary, row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
+        await interaction.response.edit_message(embed=embed, view=MainDashboardView())
+
 class TicketSettingsView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
+        self.add_item(CategorySelectMenu("ticket_category_id", "📂 اختر فئة التذاكر (الكاتيجوري)..."))
         self.add_item(ChannelSelectMenu("ticket_log_channel_id", "📜 اختر قناة سجل التذاكر (Ticket Logs)..."))
         self.add_item(RoleSelectMenu("ticket_support_role_id", "🛡️ اختر رتبة الدعم الفني المسؤول عن التذاكر..."))
 
@@ -707,16 +800,28 @@ class DashboardSelectMenu(discord.ui.Select):
             embed.add_field(name="⚡ اختصارات الأوامر الحالية", value=alias_str, inline=False)
             await interaction.response.edit_message(embed=embed, view=AutoResponseView())
 
+        elif sel == "xp":
+            embed = discord.Embed(title="⭐ إعدادات نظام اللفل والخبرة", color=discord.Color.gold())
+            lvl_chan = interaction.guild.get_channel(st[14])
+            embed.add_field(name="قناة تنبيهات اللفل", value=lvl_chan.mention if lvl_chan else "لم تحدد (تلقائي في الشات)", inline=False)
+            embed.add_field(name="معدل الكتابة", value=f"`{st[12]}` XP", inline=True)
+            embed.add_field(name="معدل الصوت", value=f"`{st[13]}` XP", inline=True)
+            await interaction.response.edit_message(embed=embed, view=XPSettingsView())
+
         elif sel == "tickets":
             embed = discord.Embed(title="🎟️ إعدادات نظام التذاكر", color=discord.Color.blue())
+            t_cat = interaction.guild.get_channel(st[7])
             t_log = interaction.guild.get_channel(st[8])
             s_role = interaction.guild.get_role(st[9])
+            
+            embed.add_field(name="فئة التذاكر (Category)", value=t_cat.name if t_cat else "غير محددة", inline=False)
             embed.add_field(name="سجل التذاكر", value=t_log.mention if t_log else "غير محددة", inline=True)
             embed.add_field(name="رتبة الدعم الفني", value=s_role.mention if s_role else "غير محددة", inline=True)
             await interaction.response.edit_message(embed=embed, view=TicketSettingsView())
 
         elif sel == "embed":
-            await interaction.response.send_modal(EmbedBuilderModal())
+            view = AdvancedEmbedBuilderView(author=interaction.user)
+            await interaction.response.send_message(embed=view.current_embed, view=view, ephemeral=True)
 
 class MainDashboardView(discord.ui.View):
     def __init__(self):
@@ -796,7 +901,11 @@ async def on_message(message: discord.Message):
         first_word = words[0]
         mapped_cmd = db.get_command_for_alias(g_id, first_word)
         if mapped_cmd:
-            pass
+            args = " ".join(words[1:])
+            # تحويل الجملة كأنها أمر عادي مسجل بالبريفكس وتمريرها للبوت
+            message.content = f"{bot.command_prefix}{mapped_cmd} {args}".strip()
+            await bot.process_commands(message)
+            return
 
     # Anti Links Check
     if st[17] and re.search(r"http[s]?://", message.content):
@@ -825,14 +934,6 @@ async def on_message(message: discord.Message):
     for trig, resp in responses:
         if trig in message.content.lower():
             await message.channel.send(resp)
-            break
-
-    # Aliases Execution Check
-    aliases = db.get_custom_aliases(g_id)
-    for alias_item, cmd_name in aliases:
-        if message.content.lower().startswith(alias_item + " ") or message.content.lower() == alias_item:
-            if message.author.guild_permissions.manage_messages:
-                await message.channel.send(f"⚡ تم تفعيل الاختصار `{alias_item}` للأمر `/{cmd_name}` بواسطة {message.author.mention}")
             break
 
     # Text XP Check
