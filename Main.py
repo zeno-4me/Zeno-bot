@@ -1299,13 +1299,15 @@ async def profile(interaction: discord.Interaction, member: Optional[discord.Mem
     rep_val = eco[4]
     title_val = eco[6]
     text_lvl = lvl_data[3]
+    voice_lvl = lvl_data[5]
+    unified_level = text_lvl + voice_lvl
 
     embed = discord.Embed(title=f"👤 بطاقة بروفايل - {target.display_name}", color=discord.Color.gold())
     embed.set_thumbnail(url=target.display_avatar.url)
     embed.add_field(name="🏷️ اللقب (Title)", value=f"`{title_val}`", inline=False)
     embed.add_field(name="💳 الكريدت (Credits)", value=f"**${credits_val}**", inline=True)
     embed.add_field(name="⭐ السمعة (Rep)", value=f"**+{rep_val}**", inline=True)
-    embed.add_field(name="📊 المستوى الكتابي", value=f"**Level {text_lvl}**", inline=True)
+    embed.add_field(name="📊 المستوى الكلي", value=f"**Level {unified_level}**", inline=True)
 
     await interaction.response.send_message(embed=embed)
 
@@ -1346,14 +1348,25 @@ async def rank(interaction: discord.Interaction, member: Optional[discord.Member
     target = member or interaction.user
     data = db.get_user_data(interaction.guild_id, target.id)
 
-    # حساب اللفل الكلي الموحد (كتابي + صوتي)
+    # حساب الـ XP واللفل الكلي الموحد (كتابي + صوتي)
+    text_xp = data[2]
     text_lvl = data[3]
+    voice_xp = data[4]
     voice_lvl = data[5]
+    
     unified_level = text_lvl + voice_lvl
+    total_xp = text_xp + voice_xp
+    
+    # حساب الـ XP المطلوب للمستوى الموحد القادم (باستخدام الدالة الموجودة في الكود)
+    next_level_xp = calculate_next_level_xp(unified_level)
+    
+    # إنشاء شريط التقدم للخبرة الكلية
+    progress_bar = create_progress_bar(total_xp, next_level_xp, length=15)
 
     embed = discord.Embed(title=f"🏆 المستوى الكلي - {target.display_name}", color=discord.Color.gold())
     embed.set_thumbnail(url=target.display_avatar.url)
     embed.add_field(name="اللفل الموحد (Unified Level)", value=f"**Level {unified_level}**", inline=False)
+    embed.add_field(name="الخبرة الكلية (Total XP)", value=f"`{total_xp} / {next_level_xp}`\n`[{progress_bar}]`", inline=False)
     
     view = RankMainView(target_member=target, author_id=interaction.user.id)
     await interaction.response.send_message(embed=embed, view=view)
