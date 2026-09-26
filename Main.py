@@ -158,6 +158,18 @@ class Database:
                 )
             """)
 
+            # Activity Log Table (New Table for Rank Timeframes)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS activity_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER,
+                    user_id INTEGER,
+                    activity_type TEXT, 
+                    amount INTEGER,
+                    timestamp REAL
+                )
+            """)
+
             conn.commit()
 
     # Guild Settings Operations
@@ -356,6 +368,49 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("SELECT button_label, role_id FROM button_roles WHERE guild_id = ?", (guild_id,))
             return cursor.fetchall()
+
+    # Activity Logging (New for Rank Command)
+    def log_activity(self, guild_id: int, user_id: int, activity_type: str, amount: int = 1):
+        """تسجيل نشاط جديد (نص، صوت، صورة، فيديو)"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO activity_log (guild_id, user_id, activity_type, amount, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+            """, (guild_id, user_id, activity_type, amount, time.time()))
+            conn.commit()
+
+    def get_timeframe_stats(self, guild_id: int, user_id: int, timeframe: str):
+        """جلب الإحصائيات حسب الفترة الزمنية المحددة"""
+        now = time.time()
+        if timeframe == "today":
+            start_time = now - 86400
+        elif timeframe == "week":
+            start_time = now - 604800
+        elif timeframe == "month":
+            start_time = now - 2592000
+        elif timeframe == "year":
+            start_time = now - 31536000
+        else: # all
+            start_time = 0
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT activity_type, SUM(amount) 
+                FROM activity_log 
+                WHERE guild_id = ? AND user_id = ? AND timestamp >= ?
+                GROUP BY activity_type
+            """, (guild_id, user_id, start_time))
+            
+            results = cursor.fetchall()
+            
+        stats = {'text_xp': 0, 'voice_xp': 0, 'image_count': 0, 'video_count': 0, 'video_duration': 0}
+        for act_type, total in results:
+            if act_type in stats:
+                stats[act_type] = total or 0
+                
+        return stats
 
 db = Database()
 
@@ -828,6 +883,74 @@ class MainDashboardView(discord.ui.View):
         super().__init__(timeout=None)
         self.add_item(DashboardSelectMenu())
 
+# ----------------- فئات UI الجديدة لأمر /rank -----------------
+class RankTimeframeSelect(discord.ui.Select):
+    def __init__(self, target_member: discord.Member):
+        self.target_member = target_member
+        options = [
+            discord.SelectOption(label="اليوم", value="today", emoji="📅"),
+            discord.SelectOption(label="هذا الأسبوع", value="week", emoji="📆"),
+            discord.SelectOption(label="هذا الشهر", value="month", emoji="🗓️"),
+            discord.SelectOption(label="هذه السنة", value="year", emoji="🌎"),
+            discord.SelectOption(label="الكلي (كل الأوقات)", value="all", emoji="♾️")
+        ]
+        super().__init__(placeholder="اختر الفترة الزمنية لعرض التفاصيل...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        timeframe = self.values[0]
+        
+        # جلب الإحصائيات من الداتا بيس
+        stats = db.get_timeframe_stats(interaction.guild_id, self.target_member.id, timeframe)
+        
+        # حساب اللفلات بناءً على XP الفترة المحددة
+        temp_text_lvl = int(math.sqrt(stats['text_xp'] / 100)) + 1
+        temp_voice_lvl = int(math.sqrt(stats['voice_xp'] / 100)) + 1
+        
+        timeframe_names = {"today": "اليوم", "week": "هذا الأسبوع", "month": "هذا الشهر", "year": "هذه السنة", "all": "الكلي"}
+        
+        embed = discord.Embed(
+            title=f"📊 إحصائيات {self.target_member.display_name} - ({timeframe_names[timeframe]})",
+            color=discord.Color.blue()
+        )
+        embed.set_thumbnail(url=self.target_member.display_avatar.url)
+        
+        embed.add_field(name="💬 اللفل الكتابي", value=f"Level: `{temp_text_lvl}`\nXP: `{stats['text_xp']}`", inline=True)
+        embed.add_field(name="🎤 اللفل الصوتي", value=f"Level: `{temp_voice_lvl}`\nXP: `{stats['voice_xp']}`", inline=True)
+        embed.add_field(name="🖼️ الصور المرسلة", value=f"`{stats['image_count']}` صور", inline=False)
+        embed.add_field(name="🎥 الفيديوهات المرسلة", value=f"`{stats['video_count']}` فيديو", inline=True)
+        embed.add_field(name="⏱️ دقائق الفيديوهات", value=f"`{stats['video_duration']}` دقيقة", inline=True)
+        
+        await interaction.edit_original_response(embed=embed)
+
+class RankInfoView(discord.ui.View):
+    def __init__(self, target_member: discord.Member, author_id: int):
+        super().__init__(timeout=120)
+        self.author_id = author_id
+        self.add_item(RankTimeframeSelect(target_member))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ هذه القائمة ليست لك!", ephemeral=True)
+            return False
+        return True
+
+class RankMainView(discord.ui.View):
+    def __init__(self, target_member: discord.Member, author_id: int):
+        super().__init__(timeout=120)
+        self.target_member = target_member
+        self.author_id = author_id
+
+    @discord.ui.button(label="المعلومات", style=discord.ButtonStyle.secondary, emoji="ℹ️")
+    async def show_info(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ مو أنت اللي طلبت الأمر!", ephemeral=True)
+            return
+            
+        view = RankInfoView(self.target_member, self.author_id)
+        await interaction.response.edit_message(view=view)
+# ----------------- نهاية فئات UI الجديدة -----------------
+
 @tasks.loop(minutes=1)
 async def voice_xp_loop():
     """Background task awarding Voice XP continuously."""
@@ -843,6 +966,9 @@ async def voice_xp_loop():
                 if member.bot or member.voice.self_deaf or member.voice.self_mute:
                     continue
                 leveled_up, new_lvl = db.add_voice_xp(guild.id, member.id, v_rate, time_add=60)
+                # تسجيل النشاط لأمر rank الجديد
+                db.log_activity(guild.id, member.id, 'voice_xp', v_rate)
+                
                 if leveled_up:
                     await check_and_grant_level_roles(guild, member, new_lvl)
 
@@ -936,12 +1062,27 @@ async def on_message(message: discord.Message):
             await message.channel.send(resp)
             break
 
-    # Text XP Check
+    # Text XP & Activity Logging Check
     if st[10]:
         u_data = db.get_user_data(g_id, message.author.id)
+        
+        # فحص المرفقات لعد الصور والفيديوهات
+        for attachment in message.attachments:
+            if attachment.content_type:
+                if attachment.content_type.startswith('image/'):
+                    db.log_activity(g_id, message.author.id, 'image_count', 1)
+                elif attachment.content_type.startswith('video/'):
+                    db.log_activity(g_id, message.author.id, 'video_count', 1)
+                    # افتراض 1 دقيقة كمدة لكل فيديو (بسبب قيود ديسكورد API في جلب المدة)
+                    db.log_activity(g_id, message.author.id, 'video_duration', 1)
+
+        # فحص وإضافة الخبرة الكتابية
         if time.time() - u_data[7] >= 60:
             t_rate = st[12]
             leveled_up, new_lvl = db.add_text_xp(g_id, message.author.id, t_rate)
+            # تسجيل نشاط الكتابة
+            db.log_activity(g_id, message.author.id, 'text_xp', t_rate)
+            
             if leveled_up:
                 await check_and_grant_level_roles(message.guild, message.author, new_lvl)
                 lvl_c_id = st[14]
@@ -1200,27 +1341,22 @@ async def title(interaction: discord.Interaction, text: str):
     db.set_title(interaction.guild_id, interaction.user.id, text)
     await interaction.response.send_message(f"✅ تم تحديث لقبك الشخصي إلى: **{text}**")
 
-@bot.tree.command(name="rank", description="عرض بطاقة المستوى والمستوى الكتابي والصوتي")
+@bot.tree.command(name="rank", description="عرض المستوى الكلي أو التفصيلي لحسابك")
 async def rank(interaction: discord.Interaction, member: Optional[discord.Member] = None):
     target = member or interaction.user
     data = db.get_user_data(interaction.guild_id, target.id)
 
-    text_xp, text_lvl = data[2], data[3]
-    voice_xp, voice_lvl = data[4], data[5]
-    v_hours = round(data[6] / 3600, 1)
+    # حساب اللفل الكلي الموحد (كتابي + صوتي)
+    text_lvl = data[3]
+    voice_lvl = data[5]
+    unified_level = text_lvl + voice_lvl
 
-    next_text_xp = calculate_next_level_xp(text_lvl)
-    next_voice_xp = calculate_next_level_xp(voice_lvl)
-
-    text_bar = create_progress_bar(text_xp, next_text_xp)
-    voice_bar = create_progress_bar(voice_xp, next_voice_xp)
-
-    embed = discord.Embed(title=f"📊 بطاقة المستوى - {target.display_name}", color=discord.Color.blue())
+    embed = discord.Embed(title=f"🏆 المستوى الكلي - {target.display_name}", color=discord.Color.gold())
     embed.set_thumbnail(url=target.display_avatar.url)
-    embed.add_field(name="💬 المستوى الكتابي (Text)", value=f"**Level:** `{text_lvl}` | **XP:** `{text_xp}/{next_text_xp}`\n`[{text_bar}]`", inline=False)
-    embed.add_field(name="🎤 المستوى الصوتي (Voice)", value=f"**Level:** `{voice_lvl}` | **XP:** `{voice_xp}/{next_voice_xp}`\n**ساعات التحدث:** `{v_hours}` hrs\n`[{voice_bar}]`", inline=False)
-
-    await interaction.response.send_message(embed=embed)
+    embed.add_field(name="اللفل الموحد (Unified Level)", value=f"**Level {unified_level}**", inline=False)
+    
+    view = RankMainView(target_member=target, author_id=interaction.user.id)
+    await interaction.response.send_message(embed=embed, view=view)
 
 @bot.tree.command(name="top", description="عرض قائمة المتصدرين للسيرفر باللفل أو الكريدت")
 async def top(interaction: discord.Interaction, category: Literal["المستويات (XP)", "الكريدت (Credits)"]):
