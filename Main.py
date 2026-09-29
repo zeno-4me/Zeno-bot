@@ -1478,6 +1478,13 @@ async def dashboard(interaction: discord.Interaction):
     view = MainDashboardView()
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+async def setup_hook():
+    for filename in os.listdir('./cogs'):
+        if filename.endswith('.py'):
+            await bot.load_extension(f'cogs.{filename[:-3]}')
+
+bot.setup_hook = setup_hook
+
 if __name__ == "__main__":
     TOKEN = os.getenv("DISCORD_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
     if TOKEN == "YOUR_BOT_TOKEN_HERE":
