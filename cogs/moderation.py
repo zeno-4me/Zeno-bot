@@ -168,5 +168,4 @@ class Moderation(commands.Cog):
         await interaction.response.send_message(f"👢 تم طرد {member.mention} من الروم الصوتي!")
 
 async def setup(bot):
-    cog = Moderation(bot)
-    await bot.add_cog(cog)
+    await bot.add_cog(Moderation(bot))
