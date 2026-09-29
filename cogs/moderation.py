@@ -169,5 +169,4 @@ class Moderation(commands.Cog):
 
 async def setup(bot):
     cog = Moderation(bot)
-    bot.tree.add_command(cog.channel_group)
     await bot.add_cog(cog)
