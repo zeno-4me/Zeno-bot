@@ -36,7 +36,7 @@ async def on_ready():
         print(f"Failed to sync slash commands: {e}")
 
 async def setup_hook():
-    for filename in os.listdir('./cogs'):
+    for filename in os.listdir('./Cogs'):
         if filename.endswith('.py'):
             await bot.load_extension(f'cogs.{filename[:-3]}')
 
