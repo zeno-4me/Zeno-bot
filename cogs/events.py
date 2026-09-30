@@ -100,9 +100,7 @@ class Events(commands.Cog):
                     await check_and_grant_level_roles(message.guild, message.author, new_lvl)
                     lvl_c_id = st[14]
                     target_c = message.guild.get_channel(lvl_c_id) or message.channel
-                    await target_c.send(f"🎉 مبروك {message.author.mention}! ارتفع مستواك الكتابي إلى **المستوى {new_lvl}** 💬!")
-
-        await self.bot.process_commands(message)
-
+                    await target_c.send(f"🎉 مبروك {message.author.mention}! ارتفع مستواك الكتابي إلى **المستوى {new_lvl}** 
+                    
 async def setup(bot):
     await bot.add_cog(Events(bot))
