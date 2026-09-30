@@ -8,6 +8,6 @@ class General(commands.Cog):
     @commands.command(name='انت_شغال؟')
     async def test_cmd(self, ctx):
         await ctx.send("ب-بابا ل-ل-لسانك قذر بابا•~•")
-        
-        async def setup(bot):
+
+async def setup(bot):
     await bot.add_cog(General(bot))
