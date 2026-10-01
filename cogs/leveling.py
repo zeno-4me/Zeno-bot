@@ -21,9 +21,15 @@ class RankTimeframeSelect(discord.ui.Select):
         await interaction.response.defer()
         timeframe = self.values[0]
         
-        stats = db.get_timeframe_stats(interaction.guild_id, self.target_member.id, timeframe)
-        temp_text_lvl = int(math.sqrt(stats['text_xp'] / 100)) + 1
-        temp_voice_lvl = int(math.sqrt(stats['voice_xp'] / 100)) + 1
+        stats = await db.get_timeframe_stats(interaction.guild_id, self.target_member.id, timeframe)
+        
+        text_xp = stats.get('text_xp', 0)
+        voice_xp = stats.get('voice_xp', 0)
+        total_xp = text_xp + voice_xp
+        
+        temp_text_lvl = int(math.sqrt(text_xp / 100)) + 1
+        temp_voice_lvl = int(math.sqrt(voice_xp / 100)) + 1
+        temp_main_lvl = int(math.sqrt(total_xp / 100)) + 1
         
         timeframe_names = {"today": "اليوم", "week": "هذا الأسبوع", "month": "هذا الشهر", "year": "هذه السنة", "all": "الكلي"}
         
@@ -33,11 +39,13 @@ class RankTimeframeSelect(discord.ui.Select):
         )
         embed.set_thumbnail(url=self.target_member.display_avatar.url)
         
-        embed.add_field(name="💬 اللفل الكتابي", value=f"Level: `{temp_text_lvl}`\nXP: `{stats['text_xp']}`", inline=True)
-        embed.add_field(name="🎤 اللفل الصوتي", value=f"Level: `{temp_voice_lvl}`\nXP: `{stats['voice_xp']}`", inline=True)
-        embed.add_field(name="🖼️ الصور المرسلة", value=f"`{stats['image_count']}` صور", inline=False)
-        embed.add_field(name="🎥 الفيديوهات المرسلة", value=f"`{stats['video_count']}` فيديو", inline=True)
-        embed.add_field(name="⏱️ دقائق الفيديوهات", value=f"`{stats['video_duration']}` دقيقة", inline=True)
+        embed.add_field(name="⭐ اللفل الأساسي (Total XP)", value=f"Level: `{temp_main_lvl}`\nXP: `{total_xp:,}`", inline=False)
+        embed.add_field(name="💬 اللفل الكتابي (Text XP)", value=f"Level: `{temp_text_lvl}`\nXP: `{text_xp:,}`", inline=True)
+        embed.add_field(name="🎤 اللفل الصوتي (Voice XP)", value=f"Level: `{temp_voice_lvl}`\nXP: `{voice_xp:,}`", inline=True)
+        
+        embed.add_field(name="💬 إجمالي الرسائل", value=f"`{stats.get('message_count', 0):,}` رسالة", inline=False)
+        embed.add_field(name="🖼️ الصور المرسلة", value=f"`{stats.get('image_count', 0):,}` صورة", inline=True)
+        embed.add_field(name="🎥 الفيديوهات المرسلة", value=f"`{stats.get('video_count', 0):,}` فيديو", inline=True)
         
         await interaction.edit_original_response(embed=embed)
 
@@ -59,10 +67,10 @@ class RankMainView(discord.ui.View):
         self.target_member = target_member
         self.author_id = author_id
 
-    @discord.ui.button(label="المعلومات", style=discord.ButtonStyle.secondary, emoji="ℹ️")
+    @discord.ui.button(label="المعلومات التفصيلية", style=discord.ButtonStyle.secondary, emoji="ℹ️")
     async def show_info(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.author_id:
-            await interaction.response.send_message("❌ مو أنت اللي طلبت الأمر!", ephemeral=True)
+            await interaction.response.send_message("❌ أنت لست صاحب الطلب!", ephemeral=True)
             return
             
         view = RankInfoView(self.target_member, self.author_id)
@@ -79,68 +87,73 @@ class Leveling(commands.Cog):
     @tasks.loop(minutes=1)
     async def voice_xp_loop(self):
         for guild in self.bot.guilds:
-            st = db.get_guild_settings(guild.id)
-            if not st[11]:
+            st = await db.get_guild_settings(guild.id)
+            if not st or not st[11]:
                 continue
-            v_rate = st[13]
+            v_rate = st[13] if len(st) > 13 else 10
             for channel in guild.voice_channels:
                 if channel == guild.afk_channel:
                     continue
                 for member in channel.members:
                     if member.bot or member.voice.self_deaf or member.voice.self_mute:
                         continue
-                    leveled_up, new_lvl = db.add_voice_xp(guild.id, member.id, v_rate, time_add=60)
-                    db.log_activity(guild.id, member.id, 'voice_xp', v_rate)
+                    
+                    leveled_up, new_main_lvl = await db.add_voice_xp(guild.id, member.id, v_rate, time_add=60)
+                    await db.log_activity(guild.id, member.id, 'voice_xp', v_rate)
                     
                     if leveled_up:
-                        await check_and_grant_level_roles(guild, member, new_lvl)
+                        await check_and_grant_level_roles(guild, member, new_main_lvl)
+                        lvl_c_id = st[14] if len(st) > 14 else None
+                        target_c = guild.get_channel(lvl_c_id) if lvl_c_id else None
+                        if target_c:
+                            await target_c.send(f"🎉 مبروك {member.mention}! ارتفع مستواك الأساسي إلى **المستوى {new_main_lvl}**!")
 
-    @app_commands.command(name="rank", description="عرض المستوى الكلي أو التفصيلي لحسابك")
+    @app_commands.command(name="rank", description="عرض المستوى الأساسي والتفصيلي لحسابك")
     async def rank(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
         target = member or interaction.user
-        data = db.get_user_data(interaction.guild_id, target.id)
+        data = await db.get_user_data(interaction.guild_id, target.id)
 
-        text_xp = data[2]
-        text_lvl = data[3]
-        voice_xp = data[4]
-        voice_lvl = data[5]
+        text_xp = data[2] if data and len(data) > 2 else 0
+        text_lvl = data[3] if data and len(data) > 3 else 1
+        voice_xp = data[4] if data and len(data) > 4 else 0
+        voice_lvl = data[5] if data and len(data) > 5 else 1
         
-        unified_level = text_lvl + voice_lvl
         total_xp = text_xp + voice_xp
+        main_level = int(math.sqrt(total_xp / 100)) + 1
         
-        next_level_xp = calculate_next_level_xp(unified_level)
+        next_level_xp = calculate_next_level_xp(main_level)
         progress_bar = create_progress_bar(total_xp, next_level_xp, length=15)
 
-        embed = discord.Embed(title=f"🏆 المستوى الكلي - {target.display_name}", color=discord.Color.gold())
+        embed = discord.Embed(title=f"🏆 البروفايل والرتبة - {target.display_name}", color=discord.Color.gold())
         embed.set_thumbnail(url=target.display_avatar.url)
-        embed.add_field(name="اللفل الموحد (Unified Level)", value=f"**Level {unified_level}**", inline=False)
-        embed.add_field(name="الخبرة الكلية (Total XP)", value=f"`{total_xp} / {next_level_xp}`\n`[{progress_bar}]`", inline=False)
+        embed.add_field(name="✨ اللفل الأساسي (Main Level)", value=f"**Level {main_level}**", inline=False)
+        embed.add_field(name="⭐ الخبرة الكلية (Total XP)", value=f"`{total_xp:,} / {next_level_xp:,}`\n`[{progress_bar}]`", inline=False)
+        embed.add_field(name="💬 اللفل الكتابي (Text XP)", value=f"Level `{text_lvl}` ({text_xp:,} XP)", inline=True)
+        embed.add_field(name="🎤 اللفل الصوتي (Voice XP)", value=f"Level `{voice_lvl}` ({voice_xp:,} XP)", inline=True)
         
         view = RankMainView(target_member=target, author_id=interaction.user.id)
         await interaction.response.send_message(embed=embed, view=view)
 
-    @app_commands.command(name="top", description="عرض قائمة المتصدرين للسيرفر باللفل أو الكريدت")
+    @app_commands.command(name="top", description="عرض قائمة المتصدرين بالسيرفر باللفل أو الكريدت")
     async def top(self, interaction: discord.Interaction, category: Literal["المستويات (XP)", "الكريدت (Credits)"]):
         embed = discord.Embed(title=f"🏆 قائمة المتصدرين - {category}", color=discord.Color.gold())
-        with db.get_connection() as conn:
-            cursor = conn.cursor()
-
-            if "XP" in category:
-                cursor.execute("SELECT user_id, text_level, text_xp FROM user_levels WHERE guild_id = ? ORDER BY text_xp DESC LIMIT 10", (interaction.guild_id,))
-                rows = cursor.fetchall()
-                desc = ""
-                for idx, r in enumerate(rows, 1):
-                    m = interaction.guild.get_member(r[0])
-                    desc += f"**#{idx}** | {m.mention if m else 'عضو'} - Level `{r[1]}` (`{r[2]}` XP)\n"
-                embed.description = desc if desc else "لا توجد بيانات متاحة."
-            else:
-                cursor.execute("SELECT user_id, credits FROM economy WHERE guild_id = ? ORDER BY credits DESC LIMIT 10", (interaction.guild_id,))
-                rows = cursor.fetchall()
-                desc = ""
-                for idx, r in enumerate(rows, 1):
-                    m = interaction.guild.get_member(r[0])
-                    desc += f"**#{idx}** | {m.mention if m else 'عضو'} - **${r[1]}** كريدت\n"
-                embed.description = desc if desc else "لا توجد بيانات متاحة."
+        
+        if "XP" in category:
+            rows = await db.get_top_levels(interaction.guild_id, limit=10)
+            desc = ""
+            for idx, r in enumerate(rows, 1):
+                m = interaction.guild.get_member(r[0])
+                total_user_xp = r[1] + r[2]  # text_xp + voice_xp
+                main_lvl = int(math.sqrt(total_user_xp / 100)) + 1
+                desc += f"**#{idx}** | {m.mention if m else 'عضو'} - Level `{main_lvl}` (`{total_user_xp:,}` XP)\n"
+            embed.description = desc if desc else "لا توجد بيانات متاحة."
+        else:
+            rows = await db.get_top_credits(interaction.guild_id, limit=10)
+            desc = ""
+            for idx, r in enumerate(rows, 1):
+                m = interaction.guild.get_member(r[0])
+                desc += f"**#{idx}** | {m.mention if m else 'عضو'} - **${r[1]:,}** كريدت\n"
+            embed.description = desc if desc else "لا توجد بيانات متاحة."
 
         await interaction.response.send_message(embed=embed)
 
