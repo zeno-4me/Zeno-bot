@@ -9,33 +9,33 @@ from database import db
 class EditWelcomeModal(discord.ui.Modal, title="تعديل رسالة الترحيب"):
     welcome_msg = discord.ui.TextInput(label="رسالة الترحيب", style=discord.TextStyle.paragraph, placeholder="مرحباً بك {user} في سيرفر {server}!", required=True)
     async def on_submit(self, interaction: discord.Interaction):
-        db.update_guild_setting(interaction.guild_id, "welcome_msg", self.welcome_msg.value)
+        await db.update_guild_setting(interaction.guild_id, "welcome_msg", self.welcome_msg.value)
         await interaction.response.send_message("✅ تم تحديث رسالة الترحيب بنجاح!", ephemeral=True)
 
 class EditLeaveModal(discord.ui.Modal, title="تعديل رسالة المغادرة"):
     leave_msg = discord.ui.TextInput(label="رسالة المغادرة", style=discord.TextStyle.paragraph, placeholder="وداعاً {user}، نراك على خير!", required=True)
     async def on_submit(self, interaction: discord.Interaction):
-        db.update_guild_setting(interaction.guild_id, "leave_msg", self.leave_msg.value)
+        await db.update_guild_setting(interaction.guild_id, "leave_msg", self.leave_msg.value)
         await interaction.response.send_message("✅ تم تحديث رسالة المغادرة بنجاح!", ephemeral=True)
 
 class EditBadwordsModal(discord.ui.Modal, title="إدارة الكلمات الممنوعة"):
     bad_words = discord.ui.TextInput(label="الكلمات الممنوعة (افصل بفاصلة)", style=discord.TextStyle.paragraph, placeholder="كلمة1, كلمة2, رابط", required=False)
     async def on_submit(self, interaction: discord.Interaction):
-        db.update_guild_setting(interaction.guild_id, "automod_badwords", self.bad_words.value)
+        await db.update_guild_setting(interaction.guild_id, "automod_badwords", self.bad_words.value)
         await interaction.response.send_message("✅ تم حفظ قائمة الكلمات الممنوعة!", ephemeral=True)
 
 class AddAutoResponseModal(discord.ui.Modal, title="إضافة رد تلقائي"):
     trigger = discord.ui.TextInput(label="جملة المستخدم", placeholder="مثال: السلام عليكم", required=True)
     response = discord.ui.TextInput(label="رد البوت التلقائي", style=discord.TextStyle.paragraph, placeholder="وعليكم السلام ورحمة الله وبركاته", required=True)
     async def on_submit(self, interaction: discord.Interaction):
-        db.add_auto_response(interaction.guild_id, self.trigger.value, self.response.value)
+        await db.add_auto_response(interaction.guild_id, self.trigger.value, self.response.value)
         await interaction.response.send_message(f"✅ تم إضافة الرد التلقائي للكلمة: `{self.trigger.value}`", ephemeral=True)
 
 class AddCustomAliasModal(discord.ui.Modal, title="إضافة اختصار لـ أمر"):
     alias_input = discord.ui.TextInput(label="الاختصار (مثل: طرد أو .kick)", placeholder="طرد", required=True)
     command_input = discord.ui.TextInput(label="اسم الأمر الأصلي (مثل: kick أو ban)", placeholder="kick", required=True)
     async def on_submit(self, interaction: discord.Interaction):
-        db.add_custom_alias(interaction.guild_id, self.alias_input.value, self.command_input.value)
+        await db.add_custom_alias(interaction.guild_id, self.alias_input.value, self.command_input.value)
         await interaction.response.send_message(f"✅ تم ربط الاختصار `{self.alias_input.value}` بالأمر `/{self.command_input.value}` بنجاح!", ephemeral=True)
 
 class AddButtonRoleModal(discord.ui.Modal, title="إضافة رتبة زر تفاعلي"):
@@ -49,7 +49,7 @@ class AddButtonRoleModal(discord.ui.Modal, title="إضافة رتبة زر تف�
             if not role:
                 await interaction.response.send_message("❌ الرتبة غير موجودة بهذا الآيدي!", ephemeral=True)
                 return
-            db.add_button_role(interaction.guild_id, self.label.value, r_id)
+            await db.add_button_role(interaction.guild_id, self.label.value, r_id)
             await interaction.response.send_message(f"✅ تم ربط الزر `{self.label.value}` بالرتبة {role.mention}!", ephemeral=True)
         except ValueError:
             await interaction.response.send_message("❌ يرجى إدخال آيدي صحيح!", ephemeral=True)
@@ -61,8 +61,8 @@ class ChangeXPRatesModal(discord.ui.Modal, title="تعديل معدل الـ XP"
         try:
             t_rate = int(self.text_rate.value)
             v_rate = int(self.voice_rate.value)
-            db.update_guild_setting(interaction.guild_id, "text_xp_rate", t_rate)
-            db.update_guild_setting(interaction.guild_id, "voice_xp_rate", v_rate)
+            await db.update_guild_setting(interaction.guild_id, "text_xp_rate", t_rate)
+            await db.update_guild_setting(interaction.guild_id, "voice_xp_rate", v_rate)
             await interaction.response.send_message(f"✅ تم تحديث معدل الخبرة: الكتابة `{t_rate}` XP | الصوت `{v_rate}` XP", ephemeral=True)
         except ValueError:
             await interaction.response.send_message("❌ يرجى كتابة أرقام صحيحة!", ephemeral=True)
@@ -162,7 +162,7 @@ class ChannelSelectMenu(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction):
         channel = self.values[0]
-        db.update_guild_setting(interaction.guild_id, self.setting_key, channel.id)
+        await db.update_guild_setting(interaction.guild_id, self.setting_key, channel.id)
         await interaction.response.send_message(f"✅ تم تحديد القناة: {channel.mention}", ephemeral=True)
 
 class CategorySelectMenu(discord.ui.ChannelSelect):
@@ -172,7 +172,7 @@ class CategorySelectMenu(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction):
         category = self.values[0]
-        db.update_guild_setting(interaction.guild_id, self.setting_key, category.id)
+        await db.update_guild_setting(interaction.guild_id, self.setting_key, category.id)
         await interaction.response.send_message(f"✅ تم تحديد الفئة (Category): **{category.name}**", ephemeral=True)
 
 class RoleSelectMenu(discord.ui.RoleSelect):
@@ -182,7 +182,7 @@ class RoleSelectMenu(discord.ui.RoleSelect):
 
     async def callback(self, interaction: discord.Interaction):
         role = self.values[0]
-        db.update_guild_setting(interaction.guild_id, self.setting_key, role.id)
+        await db.update_guild_setting(interaction.guild_id, self.setting_key, role.id)
         await interaction.response.send_message(f"✅ تم تحديد الرتبة: {role.mention}", ephemeral=True)
 
 class DynamicRoleButton(discord.ui.Button):
@@ -204,9 +204,8 @@ class DynamicRoleButton(discord.ui.Button):
             await interaction.response.send_message(f"➕ تم إعطاؤك الرتبة {role.mention} بنجاح!", ephemeral=True)
 
 class ButtonRolesDeployView(discord.ui.View):
-    def __init__(self, guild_id: int):
+    def __init__(self, b_roles: list):
         super().__init__(timeout=None)
-        b_roles = db.get_button_roles(guild_id)
         for label, r_id in b_roles:
             self.add_item(DynamicRoleButton(label, r_id))
 
@@ -237,23 +236,23 @@ class AutoModSettingsView(discord.ui.View):
 
     @discord.ui.button(label="تبديل الحماية العامة", style=discord.ButtonStyle.danger, row=0)
     async def toggle_automod(self, interaction: discord.Interaction, button: discord.ui.Button):
-        st = db.get_guild_settings(interaction.guild_id)
+        st = await db.get_guild_settings(interaction.guild_id)
         new_val = 0 if st[15] else 1
-        db.update_guild_setting(interaction.guild_id, "automod_enabled", new_val)
+        await db.update_guild_setting(interaction.guild_id, "automod_enabled", new_val)
         await interaction.response.send_message(f"تم {'تفعيل' if new_val else 'تعطيل'} نظام الحماية العام!", ephemeral=True)
 
     @discord.ui.button(label="منع الروابط (Anti-Links)", style=discord.ButtonStyle.primary, row=0)
     async def toggle_links(self, interaction: discord.Interaction, button: discord.ui.Button):
-        st = db.get_guild_settings(interaction.guild_id)
+        st = await db.get_guild_settings(interaction.guild_id)
         new_val = 0 if st[17] else 1
-        db.update_guild_setting(interaction.guild_id, "anti_links", new_val)
+        await db.update_guild_setting(interaction.guild_id, "anti_links", new_val)
         await interaction.response.send_message(f"تم {'تفعيل' if new_val else 'تعطيل'} مانع الروابط الخارجية!", ephemeral=True)
 
     @discord.ui.button(label="منع دعوات الديسكورد (Anti-Invites)", style=discord.ButtonStyle.primary, row=0)
     async def toggle_invites(self, interaction: discord.Interaction, button: discord.ui.Button):
-        st = db.get_guild_settings(interaction.guild_id)
+        st = await db.get_guild_settings(interaction.guild_id)
         new_val = 0 if st[18] else 1
-        db.update_guild_setting(interaction.guild_id, "anti_invites", new_val)
+        await db.update_guild_setting(interaction.guild_id, "anti_invites", new_val)
         await interaction.response.send_message(f"تم {'تفعيل' if new_val else 'تعطيل'} مانع دعوات السيرفرات!", ephemeral=True)
 
     @discord.ui.button(label="تعديل الكلمات الممنوعة", style=discord.ButtonStyle.secondary, row=1)
@@ -283,7 +282,8 @@ class AutoResponseView(discord.ui.View):
 
     @discord.ui.button(label="📢 نشر بنل رتب الأزرار هنا", style=discord.ButtonStyle.secondary, row=1)
     async def deploy_btn_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = ButtonRolesDeployView(interaction.guild_id)
+        b_roles = await db.get_button_roles(interaction.guild_id)
+        view = ButtonRolesDeployView(b_roles)
         if len(view.children) == 0:
             await interaction.response.send_message("❌ لم تقم بإضافة أي أزرار رتب بعد! اضغط على إضافة زر رتبة تفاعلية أولاً.", ephemeral=True)
             return
@@ -339,7 +339,7 @@ class OpenTicketView(discord.ui.View):
     @discord.ui.button(label="📩 فتح تذكرة جديدة", style=discord.ButtonStyle.primary, custom_id="open_ticket_btn_pro")
     async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild = interaction.guild
-        st = db.get_guild_settings(guild.id)
+        st = await db.get_guild_settings(guild.id)
         cat_id = st[7]
         support_role_id = st[9]
         category = guild.get_channel(cat_id) if cat_id else None
@@ -364,7 +364,7 @@ class CloseTicketView(discord.ui.View):
 
     @discord.ui.button(label="🔒 إغلاق التذكرة", style=discord.ButtonStyle.danger, custom_id="close_ticket_btn_pro")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        st = db.get_guild_settings(interaction.guild_id)
+        st = await db.get_guild_settings(interaction.guild_id)
         log_chan_id = st[8]
         await interaction.response.send_message("سيتم إغلاق وحذف التذكرة خلال 5 ثوانٍ...")
 
@@ -394,7 +394,7 @@ class DashboardSelectMenu(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         sel = self.values[0]
-        st = db.get_guild_settings(interaction.guild_id)
+        st = await db.get_guild_settings(interaction.guild_id)
 
         if sel == "general":
             embed = discord.Embed(title="👋 إعدادات الترحيب والمغادرة والسجلات", color=discord.Color.green())
@@ -418,8 +418,8 @@ class DashboardSelectMenu(discord.ui.Select):
 
         elif sel == "auto_responses":
             embed = discord.Embed(title="🤖 الردود التلقائية والاختصارات", color=discord.Color.purple())
-            responses = db.get_auto_responses(interaction.guild_id)
-            aliases = db.get_custom_aliases(interaction.guild_id)
+            responses = await db.get_auto_responses(interaction.guild_id)
+            aliases = await db.get_custom_aliases(interaction.guild_id)
             
             resp_str = "\n".join([f"• `{r[0]}` ➔ {r[1]}" for r in responses[:10]]) if responses else "لا توجد ردود تلقائية مضافة"
             alias_str = "\n".join([f"• `{a[0]}` ➔ `/{a[1]}`" for a in aliases[:10]]) if aliases else "لا توجد اختصارات مضافة"
