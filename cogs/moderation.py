@@ -57,8 +57,14 @@ class Moderation(commands.Cog):
     @app_commands.command(name="ban", description="حظر عضو من السيرفر")
     @app_commands.checks.has_permissions(ban_members=True)
     async def ban(self, interaction: discord.Interaction, member: discord.Member, reason: Optional[str] = "لا يوجد سبب"):
-        await member.ban(reason=reason)
-        await interaction.response.send_message(f"⛔ تم حظر {member.mention} | السبب: {reason}")
+        if member.id == interaction.user.id:
+            await interaction.response.send_message("❌ لا يمكنك حظر نفسك!", ephemeral=True)
+            return
+        try:
+            await member.ban(reason=reason)
+            await interaction.response.send_message(f"⛔ تم حظر {member.mention} | السبب: {reason}")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ لا أملك صلاحيات كافية لحظر هذا العضو (قد تكون رتبته أعلى مني).", ephemeral=True)
 
     @app_commands.command(name="unban", description="فك الحظر عن عضو باستخدام ID")
     @app_commands.checks.has_permissions(ban_members=True)
@@ -67,70 +73,104 @@ class Moderation(commands.Cog):
             user = await self.bot.fetch_user(int(user_id))
             await interaction.guild.unban(user)
             await interaction.response.send_message(f"✅ تم فك الحظر عن العضو **{user.name}** (`{user.id}`)")
+        except ValueError:
+            await interaction.response.send_message("❌ يرجى إدخال ID صحيح (أرقام فقط)!", ephemeral=True)
+        except discord.NotFound:
+            await interaction.response.send_message("❌ هذا العضو غير موجود أو غير محظور في السيرفر!", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ تعذر فك الحظر: {e}", ephemeral=True)
 
     @app_commands.command(name="kick", description="طرد عضو خارج السيرفر")
     @app_commands.checks.has_permissions(kick_members=True)
     async def kick(self, interaction: discord.Interaction, member: discord.Member, reason: Optional[str] = "لا يوجد سبب"):
-        await member.kick(reason=reason)
-        await interaction.response.send_message(f"🚨 تم طرد {member.mention} | السبب: {reason}")
+        if member.id == interaction.user.id:
+            await interaction.response.send_message("❌ لا يمكنك طرد نفسك!", ephemeral=True)
+            return
+        try:
+            await member.kick(reason=reason)
+            await interaction.response.send_message(f"🚨 تم طرد {member.mention} | السبب: {reason}")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ لا أملك صلاحيات كافية لطرد هذا العضو.", ephemeral=True)
 
     @app_commands.command(name="timeout", description="كتم عضو لمنعه من الكتابة والتفاعل لفترة محددة")
     @app_commands.checks.has_permissions(moderate_members=True)
     async def timeout(self, interaction: discord.Interaction, member: discord.Member, minutes: int, reason: Optional[str] = "لا يوجد سبب"):
-        duration = timedelta(minutes=minutes)
-        await member.timeout(duration, reason=reason)
-        await interaction.response.send_message(f"🤐 تم كتم {member.mention} لمدة `{minutes}` دقيقة | السبب: {reason}")
+        if member.id == interaction.user.id:
+            await interaction.response.send_message("❌ لا يمكنك كتم نفسك!", ephemeral=True)
+            return
+        try:
+            duration = timedelta(minutes=minutes)
+            await member.timeout(duration, reason=reason)
+            await interaction.response.send_message(f"🤐 تم كتم {member.mention} لمدة `{minutes}` دقيقة | السبب: {reason}")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ لا أملك صلاحيات كافية لكتم هذا العضو.", ephemeral=True)
 
     @app_commands.command(name="unmute", description="فك الكتم عن عضو")
     @app_commands.checks.has_permissions(moderate_members=True)
     async def unmute(self, interaction: discord.Interaction, member: discord.Member):
-        await member.timeout(None)
-        await interaction.response.send_message(f"🔊 تم فك الكتم عن {member.mention}")
+        try:
+            await member.timeout(None)
+            await interaction.response.send_message(f"🔊 تم فك الكتم عن {member.mention}")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ لا أملك صلاحيات كافية لفك الكتم عن هذا العضو.", ephemeral=True)
 
     @app_commands.command(name="clear", description="مسح عدد محدد من الرسائل في الروم الحالي")
     @app_commands.checks.has_permissions(manage_messages=True)
     async def clear(self, interaction: discord.Interaction, amount: int, member: Optional[discord.Member] = None):
         await interaction.response.defer(ephemeral=True)
-        if member:
-            def check(m):
-                return m.author == member
-            deleted = await interaction.channel.purge(limit=amount, check=check)
-        else:
-            deleted = await interaction.channel.purge(limit=amount)
-        await interaction.followup.send(f"🧹 تم مسح `{len(deleted)}` رسالة بنجاح!", ephemeral=True)
+        try:
+            if member:
+                def check(m):
+                    return m.author == member
+                deleted = await interaction.channel.purge(limit=amount, check=check)
+            else:
+                deleted = await interaction.channel.purge(limit=amount)
+            await interaction.followup.send(f"🧹 تم مسح `{len(deleted)}` رسالة بنجاح!", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send("❌ لا أملك صلاحية إدارة الرسائل في هذه القناة!", ephemeral=True)
 
     @app_commands.command(name="lock", description="قفل الروم ومنع الأعضاء من الكتابة")
     @app_commands.checks.has_permissions(manage_channels=True)
     async def lock(self, interaction: discord.Interaction):
-        await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
-        await interaction.response.send_message("🔒 تم قفل هذه القناة ومنع الكتابة بها!")
+        try:
+            await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
+            await interaction.response.send_message("🔒 تم قفل هذه القناة ومنع الكتابة بها!")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ لا أملك صلاحية تعديل صلاحيات القناة!", ephemeral=True)
 
     @app_commands.command(name="unlock", description="فتح الروم وإعادة السماح بالكتابة")
     @app_commands.checks.has_permissions(manage_channels=True)
     async def unlock(self, interaction: discord.Interaction):
-        await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=True)
-        await interaction.response.send_message("🔓 تم فتح القناة والسماح بالكتابة مجدداً!")
+        try:
+            await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=True)
+            await interaction.response.send_message("🔓 تم فتح القناة والسماح بالكتابة مجدداً!")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ لا أملك صلاحية تعديل صلاحيات القناة!", ephemeral=True)
 
     @app_commands.command(name="slowmode", description="تفعيل الوضع البطئ للقناة (ضع 0 لإلغائه)")
     @app_commands.checks.has_permissions(manage_channels=True)
     async def slowmode(self, interaction: discord.Interaction, seconds: int):
-        await interaction.channel.edit(slowmode_delay=seconds)
-        if seconds == 0:
-            await interaction.response.send_message("⚡ تم إلغاء الوضع البطئ!")
-        else:
-            await interaction.response.send_message(f"⏱️ تم ضبط الوضع البطئ إلى `{seconds}` ثانية!")
+        try:
+            await interaction.channel.edit(slowmode_delay=seconds)
+            if seconds == 0:
+                await interaction.response.send_message("⚡ تم إلغاء الوضع البطئ!")
+            else:
+                await interaction.response.send_message(f"⏱️ تم ضبط الوضع البطئ إلى `{seconds}` ثانية!")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ لا أملك صلاحية تعديل هذه القناة!", ephemeral=True)
 
     @app_commands.command(name="warn", description="إعطاء تحذير رسمي لعضو")
     @app_commands.checks.has_permissions(manage_messages=True)
     async def warn(self, interaction: discord.Interaction, member: discord.Member, reason: str):
-        db.add_warning(interaction.guild_id, member.id, interaction.user.id, reason)
+        if member.bot:
+            await interaction.response.send_message("❌ لا يمكنك تحذير البوتات!", ephemeral=True)
+            return
+        await db.add_warning(interaction.guild_id, member.id, interaction.user.id, reason)
         await interaction.response.send_message(f"⚠️ تم تحذير {member.mention} | السبب: **{reason}**")
 
     @app_commands.command(name="warnings", description="عرض سجل تحذيرات عضو")
     async def warnings(self, interaction: discord.Interaction, member: discord.Member):
-        warns = db.get_warnings(interaction.guild_id, member.id)
+        warns = await db.get_warnings(interaction.guild_id, member.id)
         if not warns:
             await interaction.response.send_message(f"✅ العضو {member.mention} ليس لديه أي تحذيرات سابقة.")
             return
@@ -143,7 +183,7 @@ class Moderation(commands.Cog):
     @app_commands.command(name="clear-warns", description="مسح جميع التحذيرات عن عضو معين")
     @app_commands.checks.has_permissions(administrator=True)
     async def clear_warns(self, interaction: discord.Interaction, member: discord.Member):
-        db.clear_warnings(interaction.guild_id, member.id)
+        await db.clear_warnings(interaction.guild_id, member.id)
         await interaction.response.send_message(f"🧹 تم مسح جميع تحذيرات العضو {member.mention} بنجاح!")
 
     @app_commands.command(name="move", description="نقل عضو إلى الروم الصوتي الموجود فيه أنت")
@@ -155,8 +195,11 @@ class Moderation(commands.Cog):
         if not member.voice or not member.voice.channel:
             await interaction.response.send_message("❌ العضو المراد نقله ليس متواجد في أي روم صوتي حالياً!", ephemeral=True)
             return
-        await member.move_to(interaction.user.voice.channel)
-        await interaction.response.send_message(f"🚚 تم نقل {member.mention} إلى الروم **{interaction.user.voice.channel.name}**")
+        try:
+            await member.move_to(interaction.user.voice.channel)
+            await interaction.response.send_message(f"🚚 تم نقل {member.mention} إلى الروم **{interaction.user.voice.channel.name}**")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ لا أملك صلاحية نقل الأعضاء بين الرومات الصوتية!", ephemeral=True)
 
     @app_commands.command(name="vkick", description="طرد عضو من الروم الصوتي")
     @app_commands.checks.has_permissions(move_members=True)
@@ -164,8 +207,11 @@ class Moderation(commands.Cog):
         if not member.voice or not member.voice.channel:
             await interaction.response.send_message("❌ العضو غير متواجد في روم صوتي حالياً!", ephemeral=True)
             return
-        await member.move_to(None)
-        await interaction.response.send_message(f"👢 تم طرد {member.mention} من الروم الصوتي!")
+        try:
+            await member.move_to(None)
+            await interaction.response.send_message(f"👢 تم طرد {member.mention} من الروم الصوتي!")
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ لا أملك صلاحية فصل العضو عن الروم الصوتي!", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Moderation(bot))
