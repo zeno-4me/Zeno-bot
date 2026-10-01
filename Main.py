@@ -1,9 +1,12 @@
 import os
+import asyncio
 import traceback
 import discord
+from discord import app_commands
 from discord.ext import commands
 from flask import Flask
 from threading import Thread
+from database import db
 
 app = Flask('')
 
@@ -16,7 +19,7 @@ def run():
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
-    t = Thread(target=run, daemon=True) # daemon عشان ما يعلق لو طفي البوت
+    t = Thread(target=run, daemon=True)
     t.start()
 
 intents = discord.Intents.default()
@@ -27,16 +30,45 @@ intents.guilds = True
 
 class ZenoBot(commands.Bot):
     async def setup_hook(self):
-        if os.path.exists('./cogs'):
-            for filename in os.listdir('./cogs'):
-                if filename.endswith('.py'):
-                    try:
-                        await self.load_extension(f'cogs.{filename[:-3]}')
-                        print(f"تم تحميل: {filename}")
-                    except Exception as e:
-                        print(f"فشل تحميل الكوج {filename}: {e}")
+        # تهيئة قاعدة البيانات تلقائياً عند التشغيل
+        if hasattr(db, 'init_db'):
+            try:
+                if asyncio.iscoroutinefunction(db.init_db):
+                    await db.init_db()
+                else:
+                    db.init_db()
+                print("تمت تهيئة قاعدة البيانات بنجاح.")
+            except Exception as e:
+                print(f"خطأ أثناء تهيئة قاعدة البيانات: {e}")
+
+        # تحميل جميع ملفات cogs
+        cogs_dir = './cogs' if os.path.exists('./cogs') else '.'
+        for filename in os.listdir(cogs_dir):
+            if filename.endswith('.py') and filename not in ['main.py', 'database.py']:
+                cog_name = f'cogs.{filename[:-3]}' if cogs_dir == './cogs' else filename[:-3]
+                try:
+                    await self.load_extension(cog_name)
+                    print(f"تم تحميل: {filename}")
+                except Exception as e:
+                    print(f"فشل تحميل الكوج {filename}: {e}")
+                    traceback.print_exc()
 
 bot = ZenoBot(command_prefix="!", intents=intents)
+
+# معالج الأخطاء العالمي لأوامر السلاش لتجنب تعليق ديسكورد
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    print(f"⚠️ حدث خطأ في الأمر ({interaction.command.name if interaction.command else 'مجهول'}): {error}")
+    traceback.print_exception(type(error), error, error.__traceback__)
+    
+    msg = "❌ حدث خطأ أثناء تنفيذ هذا الأمر! يرجى مراجعة الكونسول."
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except Exception:
+        pass
 
 @bot.event
 async def on_ready():
