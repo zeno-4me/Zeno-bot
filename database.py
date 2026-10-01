@@ -12,14 +12,24 @@ class Database:
         self.pool = None
 
     async def connect(self):
-        """Initializes database connection pool."""
+        """Initializes database connection pool and tables if not connected."""
         if not self.pool:
+            self.db_url = self.db_url or os.getenv("DATABASE_URL")
             if not self.db_url:
                 raise ValueError("DATABASE_URL environment variable is missing!")
             self.pool = await asyncpg.create_pool(self.db_url)
-            await self.init_db()
+            await self._create_tables()
+
+    async def _ensure_connection(self):
+        """Ensures that the connection pool is open before executing any query."""
+        if not self.pool:
+            await self.connect()
 
     async def init_db(self):
+        """Legacy initialization wrapper."""
+        await self.connect()
+
+    async def _create_tables(self):
         """Initializes database tables for all features."""
         async with self.pool.acquire() as conn:
             await conn.execute("""
@@ -117,6 +127,7 @@ class Database:
             """)
 
     async def get_guild_settings(self, guild_id: int):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM guild_settings WHERE guild_id = $1", guild_id)
             if not row:
@@ -125,10 +136,12 @@ class Database:
             return row
 
     async def update_guild_setting(self, guild_id: int, column: str, value):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute(f"UPDATE guild_settings SET {column} = $1 WHERE guild_id = $2", value, guild_id)
 
     async def add_level_reward(self, guild_id: int, level: int, role_id: int):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO level_rewards (guild_id, level, role_id) VALUES ($1, $2, $3)
@@ -136,10 +149,12 @@ class Database:
             """, guild_id, level, role_id)
 
     async def get_level_rewards(self, guild_id: int):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             return await conn.fetch("SELECT level, role_id FROM level_rewards WHERE guild_id = $1 ORDER BY level ASC", guild_id)
 
     async def get_user_data(self, guild_id: int, user_id: int):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM user_levels WHERE guild_id = $1 AND user_id = $2", guild_id, user_id)
             if not row:
@@ -148,12 +163,14 @@ class Database:
             return row
 
     async def set_user_xp_level(self, guild_id: int, user_id: int, text_xp: int, text_lvl: int):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("""
                 UPDATE user_levels SET text_xp = $1, text_level = $2 WHERE guild_id = $3 AND user_id = $4
             """, text_xp, text_lvl, guild_id, user_id)
 
     async def add_text_xp(self, guild_id: int, user_id: int, xp_amount: int):
+        await self._ensure_connection()
         data = await self.get_user_data(guild_id, user_id)
         current_xp = data['text_xp'] + xp_amount
         current_lvl = data['text_level']
@@ -168,6 +185,7 @@ class Database:
         return leveled_up, new_lvl
 
     async def add_voice_xp(self, guild_id: int, user_id: int, xp_amount: int, time_add: int):
+        await self._ensure_connection()
         data = await self.get_user_data(guild_id, user_id)
         current_xp = data['voice_xp'] + xp_amount
         current_lvl = data['voice_level']
@@ -183,6 +201,7 @@ class Database:
         return leveled_up, new_lvl
 
     async def add_warning(self, guild_id: int, user_id: int, moderator_id: int, reason: str):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
             await conn.execute("""
@@ -191,6 +210,7 @@ class Database:
             """, guild_id, user_id, moderator_id, reason, now_str)
 
     async def get_warnings(self, guild_id: int, user_id: int):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             return await conn.fetch("""
                 SELECT id, moderator_id, reason, timestamp FROM warnings 
@@ -198,10 +218,12 @@ class Database:
             """, guild_id, user_id)
 
     async def clear_warnings(self, guild_id: int, user_id: int):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM warnings WHERE guild_id = $1 AND user_id = $2", guild_id, user_id)
 
     async def get_economy_data(self, guild_id: int, user_id: int):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM economy WHERE guild_id = $1 AND user_id = $2", guild_id, user_id)
             if not row:
@@ -210,6 +232,7 @@ class Database:
             return row
 
     async def update_credits(self, guild_id: int, user_id: int, amount: int):
+        await self._ensure_connection()
         data = await self.get_economy_data(guild_id, user_id)
         new_credits = max(0, data['credits'] + amount)
         async with self.pool.acquire() as conn:
@@ -217,6 +240,7 @@ class Database:
         return new_credits
 
     async def set_daily_claimed(self, guild_id: int, user_id: int, amount: int):
+        await self._ensure_connection()
         data = await self.get_economy_data(guild_id, user_id)
         new_credits = data['credits'] + amount
         async with self.pool.acquire() as conn:
@@ -225,6 +249,7 @@ class Database:
             """, new_credits, time.time(), guild_id, user_id)
 
     async def add_rep(self, guild_id: int, target_id: int, sender_id: int):
+        await self._ensure_connection()
         target_data = await self.get_economy_data(guild_id, target_id)
         new_rep = target_data['rep'] + 1
         async with self.pool.acquire() as conn:
@@ -232,10 +257,12 @@ class Database:
             await conn.execute("UPDATE economy SET last_rep = $1 WHERE guild_id = $2 AND user_id = $3", time.time(), guild_id, sender_id)
 
     async def set_title(self, guild_id: int, user_id: int, title_text: str):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("UPDATE economy SET title = $1 WHERE guild_id = $2 AND user_id = $3", title_text, guild_id, user_id)
 
     async def add_auto_response(self, guild_id: int, trigger: str, response: str):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO auto_responses (guild_id, trigger_text, response_text) VALUES ($1, $2, $3)
@@ -243,14 +270,17 @@ class Database:
             """, guild_id, trigger.lower(), response)
 
     async def get_auto_responses(self, guild_id: int):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             return await conn.fetch("SELECT trigger_text, response_text FROM auto_responses WHERE guild_id = $1", guild_id)
 
     async def delete_auto_response(self, guild_id: int, trigger: str):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM auto_responses WHERE guild_id = $1 AND trigger_text = $2", guild_id, trigger.lower())
 
     async def add_custom_alias(self, guild_id: int, alias: str, command_name: str):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO custom_aliases (guild_id, alias, command_name) VALUES ($1, $2, $3)
@@ -258,19 +288,23 @@ class Database:
             """, guild_id, alias.lower(), command_name.lower())
 
     async def get_custom_aliases(self, guild_id: int):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             return await conn.fetch("SELECT alias, command_name FROM custom_aliases WHERE guild_id = $1", guild_id)
 
     async def delete_custom_alias(self, guild_id: int, alias: str):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM custom_aliases WHERE guild_id = $1 AND alias = $2", guild_id, alias.lower())
 
     async def get_command_for_alias(self, guild_id: int, alias: str):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT command_name FROM custom_aliases WHERE guild_id = $1 AND alias = $2", guild_id, alias.lower())
             return row['command_name'] if row else None
 
     async def add_button_role(self, guild_id: int, button_label: str, role_id: int):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO button_roles (guild_id, button_label, role_id) VALUES ($1, $2, $3)
@@ -278,10 +312,12 @@ class Database:
             """, guild_id, button_label, role_id)
 
     async def get_button_roles(self, guild_id: int):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             return await conn.fetch("SELECT button_label, role_id FROM button_roles WHERE guild_id = $1", guild_id)
 
     async def log_activity(self, guild_id: int, user_id: int, activity_type: str, amount: int = 1):
+        await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO activity_log (guild_id, user_id, activity_type, amount, timestamp)
@@ -289,6 +325,7 @@ class Database:
             """, guild_id, user_id, activity_type, amount, time.time())
 
     async def get_timeframe_stats(self, guild_id: int, user_id: int, timeframe: str):
+        await self._ensure_connection()
         now = time.time()
         if timeframe == "today":
             start_time = now - 86400
