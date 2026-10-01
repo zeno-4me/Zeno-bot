@@ -5,3 +5,4 @@ imageio-ffmpeg
 flask
 gunicorn
 psycopg2-binary
+asyncpg
