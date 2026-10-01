@@ -15,8 +15,9 @@ class Events(commands.Cog):
             return
 
         # Auto Role
-        if st[6]:
-            role = member.guild.get_role(st[6])
+        auto_role_id = st['auto_role_id']
+        if auto_role_id:
+            role = member.guild.get_role(auto_role_id)
             if role:
                 try:
                     await member.add_roles(role)
@@ -24,10 +25,11 @@ class Events(commands.Cog):
                     pass
 
         # Welcome Message
-        if st[2]:
-            chan = member.guild.get_channel(st[2])
+        welcome_channel_id = st['welcome_channel_id']
+        if welcome_channel_id:
+            chan = member.guild.get_channel(welcome_channel_id)
             if chan:
-                welcome_text = st[3] if st[3] else "مرحباً بك {user} في سيرفر {server}!"
+                welcome_text = st['welcome_msg'] or "مرحباً بك {user} في سيرفر {server}!"
                 msg = welcome_text.replace("{user}", member.mention).replace("{server}", member.guild.name)
                 embed = discord.Embed(title="👋 عضو جديد ينضم إلينا!", description=msg, color=discord.Color.green())
                 embed.set_thumbnail(url=member.display_avatar.url)
@@ -40,10 +42,11 @@ class Events(commands.Cog):
             return
 
         # Leave Message
-        if st[4]:
-            chan = member.guild.get_channel(st[4])
+        leave_channel_id = st['leave_channel_id']
+        if leave_channel_id:
+            chan = member.guild.get_channel(leave_channel_id)
             if chan:
-                leave_text = st[5] if st[5] else "وداعاً {user}!"
+                leave_text = st['leave_msg'] or "وداعاً {user}!"
                 msg = leave_text.replace("{user}", member.display_name).replace("{server}", member.guild.name)
                 embed = discord.Embed(title="🚪 عضو غادر السيرفر", description=msg, color=discord.Color.red())
                 await chan.send(embed=embed)
@@ -72,7 +75,7 @@ class Events(commands.Cog):
                 return
 
         # Anti Links
-        if st[17] and re.search(r"http[s]?://", message.content):
+        if st['anti_links'] and re.search(r"http[s]?://", message.content):
             if not message.author.guild_permissions.administrator:
                 try:
                     await message.delete()
@@ -82,7 +85,7 @@ class Events(commands.Cog):
                 return
 
         # Anti Invites
-        if st[18] and re.search(r"(discord\.gg|discord\.com/invite)", message.content):
+        if st['anti_invites'] and re.search(r"(discord\.gg|discord\.com/invite)", message.content):
             if not message.author.guild_permissions.administrator:
                 try:
                     await message.delete()
@@ -92,8 +95,8 @@ class Events(commands.Cog):
                 return
 
         # AutoMod Badwords
-        if st[15] and st[16]:
-            bad_words = [w.strip().lower() for w in st[16].split(",") if w.strip()]
+        if st['automod_enabled'] and st['automod_badwords']:
+            bad_words = [w.strip().lower() for w in st['automod_badwords'].split(",") if w.strip()]
             if any(word in message.content.lower() for word in bad_words):
                 try:
                     await message.delete()
@@ -104,13 +107,14 @@ class Events(commands.Cog):
 
         # Auto Responses
         responses = await db.get_auto_responses(g_id)
-        for trig, resp in responses:
+        for row in responses:
+            trig, resp = row['trigger_text'], row['response_text']
             if trig.lower() in message.content.lower():
                 await message.channel.send(resp)
                 break
 
         # XP and Leveling System
-        if st[10]:
+        if st['text_xp_enabled']:
             u_data = await db.get_user_data(g_id, message.author.id)
 
             for attachment in message.attachments:
@@ -121,15 +125,15 @@ class Events(commands.Cog):
                         await db.log_activity(g_id, message.author.id, 'video_count', 1)
                         await db.log_activity(g_id, message.author.id, 'video_duration', 1)
 
-            last_xp_time = u_data[7] if u_data and len(u_data) > 7 else 0
+            last_xp_time = u_data['last_msg_timestamp'] if u_data else 0
             if time.time() - last_xp_time >= 60:
-                t_rate = st[12] if len(st) > 12 else 15
+                t_rate = st['text_xp_rate'] or 15
                 leveled_up, new_lvl = await db.add_text_xp(g_id, message.author.id, t_rate)
                 await db.log_activity(g_id, message.author.id, 'text_xp', t_rate)
 
                 if leveled_up:
                     await check_and_grant_level_roles(message.guild, message.author, new_lvl)
-                    lvl_c_id = st[14] if len(st) > 14 else None
+                    lvl_c_id = st['level_up_channel_id']
                     target_c = message.guild.get_channel(lvl_c_id) if lvl_c_id else message.channel
                     if target_c:
                         await target_c.send(f"🎉 مبروك {message.author.mention}! ارتفع مستواك الكتابي إلى **المستوى {new_lvl}**!")
