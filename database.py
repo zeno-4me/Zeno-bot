@@ -6,13 +6,11 @@ import discord
 import os
 
 class Database:
-    """Comprehensive Database Manager for ProBot features using PostgreSQL."""
     def __init__(self, db_url: str = None):
         self.db_url = db_url or os.getenv("DATABASE_URL")
         self.pool = None
 
     async def connect(self):
-        """Initializes database connection pool and tables if not connected."""
         if not self.pool:
             self.db_url = self.db_url or os.getenv("DATABASE_URL")
             if not self.db_url:
@@ -21,16 +19,13 @@ class Database:
             await self._create_tables()
 
     async def _ensure_connection(self):
-        """Ensures that the connection pool is open before executing any query."""
         if not self.pool:
             await self.connect()
 
     async def init_db(self):
-        """Legacy initialization wrapper."""
         await self.connect()
 
     async def _create_tables(self):
-        """Initializes database tables for all features."""
         async with self.pool.acquire() as conn:
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS guild_settings (
@@ -354,6 +349,28 @@ class Database:
                 stats[act_type] = total or 0
                 
         return stats
+
+    async def get_top_levels(self, guild_id: int, limit: int = 10):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            return await conn.fetch("""
+                SELECT user_id, text_xp, voice_xp 
+                FROM user_levels 
+                WHERE guild_id = $1 
+                ORDER BY (text_xp + voice_xp) DESC 
+                LIMIT $2
+            """, guild_id, limit)
+
+    async def get_top_credits(self, guild_id: int, limit: int = 10):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            return await conn.fetch("""
+                SELECT user_id, credits 
+                FROM economy 
+                WHERE guild_id = $1 
+                ORDER BY credits DESC 
+                LIMIT $2
+            """, guild_id, limit)
 
 db = Database()
 
