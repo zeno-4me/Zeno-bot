@@ -30,7 +30,6 @@ intents.guilds = True
 
 class ZenoBot(commands.Bot):
     async def setup_hook(self):
-        # تهيئة قاعدة البيانات تلقائياً عند التشغيل
         if hasattr(db, 'init_db'):
             try:
                 if asyncio.iscoroutinefunction(db.init_db):
@@ -41,10 +40,20 @@ class ZenoBot(commands.Bot):
             except Exception as e:
                 print(f"خطأ أثناء تهيئة قاعدة البيانات: {e}")
 
-        # تحميل جميع ملفات cogs
+        # تسجيل الـ Persistent Views عشان أزرار التذاكر ما تعطّل بعد ريستارت البوت
+        try:
+            from dashboard import OpenTicketView, CloseTicketView
+            self.add_view(OpenTicketView())
+            self.add_view(CloseTicketView())
+        except Exception as e:
+            print(f"تعذر تسجيل Views التذاكر: {e}")
+
+        # تحميل كل الـ cogs
         cogs_dir = './cogs' if os.path.exists('./cogs') else '.'
+        ignored_files = ['main.py', 'database.py']
+        
         for filename in os.listdir(cogs_dir):
-            if filename.endswith('.py') and filename not in ['main.py', 'database.py']:
+            if filename.endswith('.py') and filename.lower() not in ignored_files and not filename.startswith('.'):
                 cog_name = f'cogs.{filename[:-3]}' if cogs_dir == './cogs' else filename[:-3]
                 try:
                     await self.load_extension(cog_name)
@@ -55,7 +64,6 @@ class ZenoBot(commands.Bot):
 
 bot = ZenoBot(command_prefix="!", intents=intents)
 
-# معالج الأخطاء العالمي لأوامر السلاش لتجنب تعليق ديسكورد
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     print(f"⚠️ حدث خطأ في الأمر ({interaction.command.name if interaction.command else 'مجهول'}): {error}")
