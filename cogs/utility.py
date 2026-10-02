@@ -87,7 +87,7 @@ class Utility(commands.Cog):
         await interaction.response.send_message(f"🏓 Pong! سرعة استجابة البوت: `{latency}ms`")
 
     @app_commands.command(name="bot", description="عرض معلومات وإحصائيات البوت")
-    async def bot_info(self, interaction: discord.Interaction):
+    async def botinfo(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="🤖 معلومات البوت", 
             description="بوت متكامل ومخصص بأسلوب راقي مع لوحة تحكم داخلية كاملة.", 
