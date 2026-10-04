@@ -174,8 +174,12 @@ class Moderation(commands.Cog):
         if not warns:
             await interaction.response.send_message(f"✅ العضو {member.mention} ليس لديه أي تحذيرات سابقة.")
             return
-        embed = discord.Embed(title=f"⚠️ تحذيرات العضو {member.display_name}", color=discord.Color.orange())
-        for w_id, mod_id, reason, ts in warns:
+        embed = discord.Embed(title=f"⚠️️ تحذيرات العضو {member.display_name}", color=discord.Color.orange())
+        for row in warns:
+            w_id = row['id']
+            mod_id = row['moderator_id']
+            reason = row['reason']
+            ts = row['timestamp']
             mod = interaction.guild.get_member(mod_id)
             embed.add_field(name=f"تحذير #{w_id} ({ts})", value=f"**السبب:** {reason}\n**بواسطة:** {mod.mention if mod else 'إداري'}", inline=False)
         await interaction.response.send_message(embed=embed)
