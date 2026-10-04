@@ -88,9 +88,9 @@ class Leveling(commands.Cog):
     async def voice_xp_loop(self):
         for guild in self.bot.guilds:
             st = await db.get_guild_settings(guild.id)
-            if not st or not st[11]:
+            if not st or not st['voice_xp_enabled']:
                 continue
-            v_rate = st[13] if len(st) > 13 else 10
+            v_rate = st['voice_xp_rate'] if st['voice_xp_rate'] is not None else 10
             for channel in guild.voice_channels:
                 if channel == guild.afk_channel:
                     continue
@@ -103,7 +103,7 @@ class Leveling(commands.Cog):
                     
                     if leveled_up:
                         await check_and_grant_level_roles(guild, member, new_main_lvl)
-                        lvl_c_id = st[14] if len(st) > 14 else None
+                        lvl_c_id = st['level_up_channel_id']
                         target_c = guild.get_channel(lvl_c_id) if lvl_c_id else None
                         if target_c:
                             await target_c.send(f"🎉 مبروك {member.mention}! ارتفع مستواك الأساسي إلى **المستوى {new_main_lvl}**!")
@@ -113,10 +113,10 @@ class Leveling(commands.Cog):
         target = member or interaction.user
         data = await db.get_user_data(interaction.guild_id, target.id)
 
-        text_xp = data[2] if data and len(data) > 2 else 0
-        text_lvl = data[3] if data and len(data) > 3 else 1
-        voice_xp = data[4] if data and len(data) > 4 else 0
-        voice_lvl = data[5] if data and len(data) > 5 else 1
+        text_xp = data['text_xp'] if data else 0
+        text_lvl = data['text_level'] if data else 1
+        voice_xp = data['voice_xp'] if data else 0
+        voice_lvl = data['voice_level'] if data else 1
         
         total_xp = text_xp + voice_xp
         main_level = int(math.sqrt(total_xp / 100)) + 1
@@ -142,8 +142,8 @@ class Leveling(commands.Cog):
             rows = await db.get_top_levels(interaction.guild_id, limit=10)
             desc = ""
             for idx, r in enumerate(rows, 1):
-                m = interaction.guild.get_member(r[0])
-                total_user_xp = r[1] + r[2]  # text_xp + voice_xp
+                m = interaction.guild.get_member(r['user_id'])
+                total_user_xp = r['text_xp'] + r['voice_xp']  # text_xp + voice_xp
                 main_lvl = int(math.sqrt(total_user_xp / 100)) + 1
                 desc += f"**#{idx}** | {m.mention if m else 'عضو'} - Level `{main_lvl}` (`{total_user_xp:,}` XP)\n"
             embed.description = desc if desc else "لا توجد بيانات متاحة."
@@ -151,8 +151,8 @@ class Leveling(commands.Cog):
             rows = await db.get_top_credits(interaction.guild_id, limit=10)
             desc = ""
             for idx, r in enumerate(rows, 1):
-                m = interaction.guild.get_member(r[0])
-                desc += f"**#{idx}** | {m.mention if m else 'عضو'} - **${r[1]:,}** كريدت\n"
+                m = interaction.guild.get_member(r['user_id'])
+                desc += f"**#{idx}** | {m.mention if m else 'عضو'} - **${r['credits']:,}** كريدت\n"
             embed.description = desc if desc else "لا توجد بيانات متاحة."
 
         await interaction.response.send_message(embed=embed)
