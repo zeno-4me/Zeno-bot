@@ -23,7 +23,7 @@ class Economy(commands.Cog):
                 return
 
             sender_data = await db.get_economy_data(interaction.guild_id, interaction.user.id)
-            current_credits = sender_data[2] if sender_data and len(sender_data) > 2 else 0
+            current_credits = sender_data['credits'] if sender_data else 0
 
             if current_credits < amount:
                 await interaction.response.send_message("❌ رصيدك الحالي لا يكفي لإجراء هذا التحويل!", ephemeral=True)
@@ -35,13 +35,13 @@ class Economy(commands.Cog):
         else:
             target = member or interaction.user
             data = await db.get_economy_data(interaction.guild_id, target.id)
-            user_credits = data[2] if data and len(data) > 2 else 0
+            user_credits = data['credits'] if data else 0
             await interaction.response.send_message(f"💳 رصيد {target.mention} الحالي هو: **${user_credits:,}** كريدت.")
 
     @app_commands.command(name="daily", description="استلام المكافأة اليومية المجانية من الكريدت")
     async def daily(self, interaction: discord.Interaction):
         data = await db.get_economy_data(interaction.guild_id, interaction.user.id)
-        last_daily = data[3] if data and len(data) > 3 else 0
+        last_daily = data['last_daily'] if data else 0
         cooldown = 86400
         now = time.time()
 
@@ -65,12 +65,12 @@ class Economy(commands.Cog):
         eco = await db.get_economy_data(interaction.guild_id, target.id)
         lvl_data = await db.get_user_data(interaction.guild_id, target.id)
 
-        credits_val = eco[2] if eco and len(eco) > 2 else 0
-        rep_val = eco[4] if eco and len(eco) > 4 else 0
-        title_val = eco[6] if eco and len(eco) > 6 and eco[6] else "لا يوجد لقب"
+        credits_val = eco['credits'] if eco else 0
+        rep_val = eco['rep'] if eco else 0
+        title_val = eco['title'] if eco and eco['title'] else "لا يوجد لقب"
         
-        text_lvl = lvl_data[3] if lvl_data and len(lvl_data) > 3 else 0
-        voice_lvl = lvl_data[5] if lvl_data and len(lvl_data) > 5 else 0
+        text_lvl = lvl_data['text_level'] if lvl_data else 0
+        voice_lvl = lvl_data['voice_level'] if lvl_data else 0
         unified_level = text_lvl + voice_lvl
 
         embed = discord.Embed(title=f"👤 بطاقة بروفايل - {target.display_name}", color=discord.Color.gold())
@@ -92,7 +92,7 @@ class Economy(commands.Cog):
             return
 
         sender_eco = await db.get_economy_data(interaction.guild_id, interaction.user.id)
-        last_rep = sender_eco[5] if sender_eco and len(sender_eco) > 5 else 0
+        last_rep = sender_eco['last_rep'] if sender_eco else 0
         cooldown = 43200
         now = time.time()
 
