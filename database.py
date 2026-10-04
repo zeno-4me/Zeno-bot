@@ -27,6 +27,7 @@ class Database:
 
     async def _create_tables(self):
         async with self.pool.acquire() as conn:
+            # 1. إنشاء الجداول الأساسية
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS guild_settings (
                     guild_id BIGINT PRIMARY KEY,
@@ -120,6 +121,22 @@ class Database:
                     timestamp DOUBLE PRECISION
                 );
             """)
+
+            # 2. التحديث التلقائي: محاولة إضافة الأعمدة الجديدة إذا لم تكن موجودة في الجدول القديم
+            alter_queries = [
+                "ALTER TABLE guild_settings ADD COLUMN automod_enabled INT DEFAULT 1;",
+                "ALTER TABLE guild_settings ADD COLUMN automod_badwords TEXT DEFAULT '';",
+                "ALTER TABLE guild_settings ADD COLUMN anti_links INT DEFAULT 0;",
+                "ALTER TABLE guild_settings ADD COLUMN anti_invites INT DEFAULT 0;",
+                "ALTER TABLE guild_settings ADD COLUMN anti_spam INT DEFAULT 0;"
+            ]
+
+            for query in alter_queries:
+                try:
+                    await conn.execute(query)
+                except asyncpg.exceptions.DuplicateColumnError:
+                    # يتم تجاهل الخطأ بأمان إذا كان العمود موجوداً بالفعل
+                    pass
 
     async def get_guild_settings(self, guild_id: int):
         await self._ensure_connection()
