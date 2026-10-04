@@ -33,10 +33,10 @@ class AddAutoResponseModal(discord.ui.Modal, title="إضافة رد تلقائي
 
 class AddCustomAliasModal(discord.ui.Modal, title="إضافة اختصار لـ أمر"):
     alias_input = discord.ui.TextInput(label="الاختصار (مثل: طرد أو .kick)", placeholder="طرد", required=True)
-    command_input = discord.ui.TextInput(label="اسم الأمر الأصلي (مثل: kick أو ban)", placeholder="kick", required=True)
+    command_input = discord.ui.TextInput(label="اسم الأمر الأصلي (بدون البادئة، مثل: kick)", placeholder="kick", required=True)
     async def on_submit(self, interaction: discord.Interaction):
         await db.add_custom_alias(interaction.guild_id, self.alias_input.value, self.command_input.value)
-        await interaction.response.send_message(f"✅ تم ربط الاختصار `{self.alias_input.value}` بالأمر `/{self.command_input.value}` بنجاح!", ephemeral=True)
+        await interaction.response.send_message(f"✅ تم ربط الاختصار `{self.alias_input.value}` بالأمر الأصلي `{self.command_input.value}` بنجاح!", ephemeral=True)
 
 class AddButtonRoleModal(discord.ui.Modal, title="إضافة رتبة زر تفاعلي"):
     label = discord.ui.TextInput(label="اسم الزر", placeholder="مثال: VIP", required=True)
@@ -55,8 +55,15 @@ class AddButtonRoleModal(discord.ui.Modal, title="إضافة رتبة زر تف�
             await interaction.response.send_message("❌ يرجى إدخال آيدي صحيح!", ephemeral=True)
 
 class ChangeXPRatesModal(discord.ui.Modal, title="تعديل معدل الـ XP"):
-    text_rate = discord.ui.TextInput(label="خبرة الكتابة (لكل رسالة)", default="15", max_length=4)
-    voice_rate = discord.ui.TextInput(label="خبرة الصوت (لكل دقيقة)", default="10", max_length=4)
+    text_rate = discord.ui.TextInput(label="خبرة الكتابة (لكل رسالة)", max_length=4)
+    voice_rate = discord.ui.TextInput(label="خبرة الصوت (لكل دقيقة)", max_length=4)
+    
+    def __init__(self, current_text=15, current_voice=10):
+        super().__init__()
+        # إظهار الأرقام الحالية المحفوظة بقاعدة البيانات بدل ما تكون فاضية
+        self.text_rate.default = str(current_text) if current_text else "15"
+        self.voice_rate.default = str(current_voice) if current_voice else "10"
+
     async def on_submit(self, interaction: discord.Interaction):
         try:
             t_rate = int(self.text_rate.value)
@@ -237,21 +244,22 @@ class AutoModSettingsView(discord.ui.View):
     @discord.ui.button(label="تبديل الحماية العامة", style=discord.ButtonStyle.danger, row=0)
     async def toggle_automod(self, interaction: discord.Interaction, button: discord.ui.Button):
         st = await db.get_guild_settings(interaction.guild_id)
-        new_val = 0 if st[15] else 1
+        # تم الإصلاح هنا (استخدام True/False بدلاً من 1/0 لقواعد بيانات Postgres)
+        new_val = not bool(st[15])
         await db.update_guild_setting(interaction.guild_id, "automod_enabled", new_val)
         await interaction.response.send_message(f"تم {'تفعيل' if new_val else 'تعطيل'} نظام الحماية العام!", ephemeral=True)
 
     @discord.ui.button(label="منع الروابط (Anti-Links)", style=discord.ButtonStyle.primary, row=0)
     async def toggle_links(self, interaction: discord.Interaction, button: discord.ui.Button):
         st = await db.get_guild_settings(interaction.guild_id)
-        new_val = 0 if st[17] else 1
+        new_val = not bool(st[17])
         await db.update_guild_setting(interaction.guild_id, "anti_links", new_val)
         await interaction.response.send_message(f"تم {'تفعيل' if new_val else 'تعطيل'} مانع الروابط الخارجية!", ephemeral=True)
 
     @discord.ui.button(label="منع دعوات الديسكورد (Anti-Invites)", style=discord.ButtonStyle.primary, row=0)
     async def toggle_invites(self, interaction: discord.Interaction, button: discord.ui.Button):
         st = await db.get_guild_settings(interaction.guild_id)
-        new_val = 0 if st[18] else 1
+        new_val = not bool(st[18])
         await db.update_guild_setting(interaction.guild_id, "anti_invites", new_val)
         await interaction.response.send_message(f"تم {'تفعيل' if new_val else 'تعطيل'} مانع دعوات السيرفرات!", ephemeral=True)
 
@@ -303,7 +311,9 @@ class XPSettingsView(discord.ui.View):
 
     @discord.ui.button(label="تعديل معدل الـ XP", style=discord.ButtonStyle.primary, row=1)
     async def edit_rates(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ChangeXPRatesModal())
+        # تم الإصلاح هنا (استدعاء المودل بالقيم الحالية)
+        st = await db.get_guild_settings(interaction.guild_id)
+        await interaction.response.send_modal(ChangeXPRatesModal(current_text=st[12], current_voice=st[13]))
 
     @discord.ui.button(label="الرجوع للصفحة الرئيسية", style=discord.ButtonStyle.secondary, row=1)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -313,11 +323,13 @@ class XPSettingsView(discord.ui.View):
 class TicketSettingsView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
+        # القوائم المنسدلة تاخذ الأسطر 0, 1, 2 بالترتيب
         self.add_item(CategorySelectMenu("ticket_category_id", "📂 اختر فئة التذاكر (الكاتيجوري)..."))
         self.add_item(ChannelSelectMenu("ticket_log_channel_id", "📜 اختر قناة سجل التذاكر (Ticket Logs)..."))
         self.add_item(RoleSelectMenu("ticket_support_role_id", "🛡️ اختر رتبة الدعم الفني المسؤول عن التذاكر..."))
 
-    @discord.ui.button(label="إرسال بنل التذاكر في هذه القناة", style=discord.ButtonStyle.success, row=2)
+    # تم الإصلاح هنا: وضع الأزرار في السطر 3 (row=3) لتجنب التضارب مع القوائم المنسدلة
+    @discord.ui.button(label="إرسال بنل التذاكر في هذه القناة", style=discord.ButtonStyle.success, row=3)
     async def deploy_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
             title="🎟️ قسم الدعم الفني والمساعدة",
@@ -327,7 +339,7 @@ class TicketSettingsView(discord.ui.View):
         await interaction.channel.send(embed=embed, view=OpenTicketView())
         await interaction.response.send_message("✅ تم نشر بنل التذاكر بنجاح!", ephemeral=True)
 
-    @discord.ui.button(label="الرجوع للصفحه الرئيسية", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="الرجوع للصفحه الرئيسية", style=discord.ButtonStyle.secondary, row=3)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=MainDashboardView())
@@ -398,10 +410,10 @@ class DashboardSelectMenu(discord.ui.Select):
 
         if sel == "general":
             embed = discord.Embed(title="👋 إعدادات الترحيب والمغادرة والسجلات", color=discord.Color.green())
-            w_c = interaction.guild.get_channel(st[2])
-            l_c = interaction.guild.get_channel(st[4])
-            lg_c = interaction.guild.get_channel(st[1])
-            a_r = interaction.guild.get_role(st[6])
+            w_c = interaction.guild.get_channel(st[2]) if st[2] else None
+            l_c = interaction.guild.get_channel(st[4]) if st[4] else None
+            lg_c = interaction.guild.get_channel(st[1]) if st[1] else None
+            a_r = interaction.guild.get_role(st[6]) if st[6] else None
             embed.add_field(name="قناة الترحيب", value=w_c.mention if w_c else "غير محددة", inline=True)
             embed.add_field(name="قناة المغادرة", value=l_c.mention if l_c else "غير محددة", inline=True)
             embed.add_field(name="قناة السجلات", value=lg_c.mention if lg_c else "غير محددة", inline=True)
@@ -430,7 +442,7 @@ class DashboardSelectMenu(discord.ui.Select):
 
         elif sel == "xp":
             embed = discord.Embed(title="⭐ إعدادات نظام اللفل والخبرة", color=discord.Color.gold())
-            lvl_chan = interaction.guild.get_channel(st[14])
+            lvl_chan = interaction.guild.get_channel(st[14]) if st[14] else None
             embed.add_field(name="قناة تنبيهات اللفل", value=lvl_chan.mention if lvl_chan else "لم تحدد (تلقائي في الشات)", inline=False)
             embed.add_field(name="معدل الكتابة", value=f"`{st[12]}` XP", inline=True)
             embed.add_field(name="معدل الصوت", value=f"`{st[13]}` XP", inline=True)
@@ -438,9 +450,9 @@ class DashboardSelectMenu(discord.ui.Select):
 
         elif sel == "tickets":
             embed = discord.Embed(title="🎟️ إعدادات نظام التذاكر", color=discord.Color.blue())
-            t_cat = interaction.guild.get_channel(st[7])
-            t_log = interaction.guild.get_channel(st[8])
-            s_role = interaction.guild.get_role(st[9])
+            t_cat = interaction.guild.get_channel(st[7]) if st[7] else None
+            t_log = interaction.guild.get_channel(st[8]) if st[8] else None
+            s_role = interaction.guild.get_role(st[9]) if st[9] else None
             
             embed.add_field(name="فئة التذاكر (Category)", value=t_cat.name if t_cat else "غير محددة", inline=False)
             embed.add_field(name="سجل التذاكر", value=t_log.mention if t_log else "غير محددة", inline=True)
@@ -470,6 +482,36 @@ class Dashboard(commands.Cog):
         )
         view = MainDashboardView()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    # تم إضافة هذا المستمع لتنفيذ اختصارات الأوامر فعلياً
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.author.bot or not message.guild:
+            return
+            
+        aliases = await db.get_custom_aliases(message.guild.id)
+        if aliases:
+            for alias, command_name in aliases:
+                # إذا كتب المستخدم الاختصار زي ما هو أو كتبه مع فراغ (لأوامر تتطلب معلومات إضافية)
+                if message.content == alias or message.content.startswith(f"{alias} "):
+                    
+                    # نستخرج البريفكس الأساسي للبوت عشان نركب الأمر المخفي
+                    prefix = "!"
+                    if callable(self.bot.command_prefix):
+                        prefixes = await self.bot.command_prefix(self.bot, message)
+                        prefix = prefixes[0] if isinstance(prefixes, (list, tuple)) else prefixes
+                    elif isinstance(self.bot.command_prefix, (list, tuple)):
+                        prefix = self.bot.command_prefix[0]
+                    elif isinstance(self.bot.command_prefix, str):
+                        prefix = self.bot.command_prefix
+
+                    # نغير محتوى رسالة المستخدم برمجياً كأنه كتب الأمر الأصلي
+                    args = message.content[len(alias):]
+                    message.content = f"{prefix}{command_name}{args}"
+                    
+                    # نخلي البوت يعالج الرسالة المعدلة كأمر حقيقي وينفذه
+                    await self.bot.process_commands(message)
+                    return  # نوقف اللوب إذا لقينا الاختصار ونفذناه
 
 async def setup(bot):
     await bot.add_cog(Dashboard(bot))
