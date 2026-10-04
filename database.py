@@ -124,6 +124,11 @@ class Database:
 
             # 2. التحديث التلقائي: محاولة إضافة الأعمدة الجديدة إذا لم تكن موجودة في الجدول القديم
             alter_queries = [
+                "ALTER TABLE guild_settings ADD COLUMN text_xp_enabled INT DEFAULT 1;",
+                "ALTER TABLE guild_settings ADD COLUMN voice_xp_enabled INT DEFAULT 1;",
+                "ALTER TABLE guild_settings ADD COLUMN text_xp_rate INT DEFAULT 15;",
+                "ALTER TABLE guild_settings ADD COLUMN voice_xp_rate INT DEFAULT 10;",
+                "ALTER TABLE guild_settings ADD COLUMN level_up_channel_id BIGINT DEFAULT 0;",
                 "ALTER TABLE guild_settings ADD COLUMN automod_enabled INT DEFAULT 1;",
                 "ALTER TABLE guild_settings ADD COLUMN automod_badwords TEXT DEFAULT '';",
                 "ALTER TABLE guild_settings ADD COLUMN anti_links INT DEFAULT 0;",
