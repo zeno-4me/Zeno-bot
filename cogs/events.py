@@ -1,94 +1,13 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import time
-import aiohttp
-import asyncio
-import json
-import os
-import tempfile
 from database import db, check_and_grant_level_roles
-
-def get_file_metadata(file_path):
-    """
-    دالة مساعدة لاستخراج بيانات الملف عبر ffprobe
-    """
-    cmd = [
-        "ffprobe",
-        "-v", "quiet",
-        "-print_format", "json",
-        "-show_format",
-        "-show_streams",
-        file_path
-    ]
-    process = os.popen(" ".join(cmd))
-    output = process.read()
-    process.close()
-    return json.loads(output)
 
 class Events(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.voice_times = {}
 
-    # --- 1. امر السلاش (/check) للفحص ---
-    @app_commands.command(name="check", description="فحص مدة ودقة وحجم مقطع فيديو أو صورة")
-    @app_commands.describe(attachment="قم برفع الفيديو أو الصورة المراد فحصها")
-    async def check_slash(self, interaction: discord.Interaction, attachment: discord.Attachment):
-        valid_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.png', '.jpg', '.jpeg', '.gif', '.webp']
-        if not any(attachment.filename.lower().endswith(ext) for ext in valid_extensions):
-            await interaction.response.send_message("❌ المرفق ليس صورة أو فيديو مدعوم.", ephemeral=True)
-            return
-
-        await interaction.response.defer(thinking=True)
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(attachment.url) as resp:
-                    if resp.status != 200:
-                        await interaction.followup.send("❌ فشل في تحميل الملف.")
-                        return
-                    data = await resp.read()
-
-            with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                temp_file.write(data)
-                temp_path = temp_file.name
-
-            loop = asyncio.get_event_loop()
-            metadata = await loop.run_in_executor(None, get_file_metadata, temp_path)
-            
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-
-            size_mb = attachment.size / (1024 * 1024)
-            width, height = "غير معروف", "غير معروف"
-            duration = "غير محدد (صورة)"
-
-            if "streams" in metadata:
-                for stream in metadata["streams"]:
-                    if "width" in stream and "height" in stream:
-                        width = stream["width"]
-                        height = stream["height"]
-                        break
-            
-            if "format" in metadata and "duration" in metadata["format"]:
-                dur_seconds = float(metadata["format"]["duration"])
-                mins, secs = divmod(dur_seconds, 60)
-                duration = f"{int(mins)} دقيقة و {int(secs)} ثانية"
-
-            embed = discord.Embed(title="📊 نتائج فحص الوسائط", color=discord.Color.blue())
-            embed.add_field(name="📁 اسم الملف", value=attachment.filename, inline=False)
-            embed.add_field(name="💾 الحجم", value=f"{size_mb:.2f} ميجابايت", inline=True)
-            embed.add_field(name="📐 الدقة", value=f"{width}x{height}", inline=True)
-            embed.add_field(name="⏱ المدة", value=duration, inline=False)
-            embed.set_thumbnail(url=attachment.url)
-
-            await interaction.followup.send(embed=embed)
-
-        except Exception as e:
-            await interaction.followup.send(f"❌ حدث خطأ أثناء الفحص: {str(e)}")
-
-    # --- 2. الأحداث العادية (Listeners) ---
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
@@ -97,60 +16,6 @@ class Events(commands.Cog):
         g_id = message.guild.id
         u_id = message.author.id
         settings = await db.get_guild_settings(g_id)
-
-        # دعم أمر الكتابة العادي (مثل: تشيك أو check عند المنشن/الرد على صورة أو فيديو)
-        if message.content.strip().lower() in ["تشيك", "check", "!تشيك", "!check"]:
-            target_message = message
-            if message.reference:
-                target_message = await message.channel.fetch_message(message.reference.message_id)
-
-            if target_message.attachments:
-                attachment = target_message.attachments[0]
-                valid_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.png', '.jpg', '.jpeg', '.gif', '.webp']
-                if any(attachment.filename.lower().endswith(ext) for ext in valid_extensions):
-                    status_msg = await message.channel.send("⏳ جاري فحص الملف...")
-                    try:
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(attachment.url) as resp:
-                                if resp.status == 200:
-                                    data = await resp.read()
-                                    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                                        temp_file.write(data)
-                                        temp_path = temp_file.name
-
-                                    loop = asyncio.get_event_loop()
-                                    metadata = await loop.run_in_executor(None, get_file_metadata, temp_path)
-                                    if os.path.exists(temp_path):
-                                        os.remove(temp_path)
-
-                                    size_mb = attachment.size / (1024 * 1024)
-                                    width, height = "غير معروف", "غير معروف"
-                                    duration = "غير محدد (صورة)"
-
-                                    if "streams" in metadata:
-                                        for stream in metadata["streams"]:
-                                            if "width" in stream and "height" in stream:
-                                                width = stream["width"]
-                                                height = stream["height"]
-                                                break
-
-                                    if "format" in metadata and "duration" in metadata["format"]:
-                                        dur_seconds = float(metadata["format"]["duration"])
-                                        mins, secs = divmod(dur_seconds, 60)
-                                        duration = f"{int(mins)} دقيقة و {int(secs)} ثانية"
-
-                                    embed = discord.Embed(title="📊 نتائج فحص الوسائط", color=discord.Color.blue())
-                                    embed.add_field(name="📁 اسم الملف", value=attachment.filename, inline=False)
-                                    embed.add_field(name="💾 الحجم", value=f"{size_mb:.2f} ميجابايت", inline=True)
-                                    embed.add_field(name="📐 الدقة", value=f"{width}x{height}", inline=True)
-                                    embed.add_field(name="⏱ المدة", value=duration, inline=False)
-                                    embed.set_thumbnail(url=attachment.url)
-
-                                    await status_msg.edit(content=None, embed=embed)
-                                    return
-                    except Exception as e:
-                        await status_msg.edit(content=f"❌ حدث خطأ أثناء الفحص: {str(e)}")
-                        return
 
         # 1. نظام الحماية والأوتومود (Automod)
         if settings['automod_enabled']:
@@ -267,7 +132,7 @@ class Events(commands.Cog):
                 except Exception:
                     pass
 
-        # إرسال رسالة الترحيب
+        # إرسال رسالة الترحب
         if settings['welcome_channel_id']:
             channel = member.guild.get_channel(settings['welcome_channel_id'])
             if channel:
