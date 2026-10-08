@@ -1,4 +1,5 @@
 import time
+import math
 from typing import Optional
 import discord
 from discord import app_commands
@@ -69,16 +70,17 @@ class Economy(commands.Cog):
         rep_val = eco['rep'] if eco else 0
         title_val = eco['title'] if eco and eco['title'] else "لا يوجد لقب"
         
-        text_lvl = lvl_data['text_level'] if lvl_data else 0
-        voice_lvl = lvl_data['voice_level'] if lvl_data else 0
-        unified_level = text_lvl + voice_lvl
+        text_xp = lvl_data['text_xp'] if lvl_data else 0
+        voice_xp = lvl_data['voice_xp'] if lvl_data else 0
+        total_xp = text_xp + voice_xp
+        unified_level = int(math.sqrt(total_xp / 100)) + 1  # هنا عدلنا الحسبة اللي كانت جايبة العيد
 
-        embed = discord.Embed(title=f"👤 بطاقة بروفايل - {target.display_name}", color=discord.Color.gold())
+        embed = discord.Embed(title=f"👤 بروفايل - {target.display_name}", color=discord.Color.dark_theme())
         embed.set_thumbnail(url=target.display_avatar.url)
-        embed.add_field(name="🏷️ اللقب (Title)", value=f"`{title_val}`", inline=False)
-        embed.add_field(name="💳 الكريدت (Credits)", value=f"**${credits_val:,}**", inline=True)
-        embed.add_field(name="⭐ السمعة (Rep)", value=f"**+{rep_val}**", inline=True)
-        embed.add_field(name="📊 المستوى الكلي", value=f"**Level {unified_level}**", inline=True)
+        embed.add_field(name="🏷️ اللقب", value=f"`{title_val}`", inline=False)
+        embed.add_field(name="💳 الكريدت", value=f"**${credits_val:,}**", inline=True)
+        embed.add_field(name="⭐ السمعة", value=f"**+{rep_val}**", inline=True)
+        embed.add_field(name="📊 المستوى", value=f"**Level {unified_level}**", inline=True)
 
         await interaction.response.send_message(embed=embed)
 
