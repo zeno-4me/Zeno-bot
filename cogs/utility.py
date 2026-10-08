@@ -1,11 +1,27 @@
+import json
 import discord
 from discord import app_commands
 from discord.ext import commands
 from typing import Optional
+from database import db
 
 class Utility(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    @app_commands.command(name="get_embed", description="عرض إمبد مسبق الحفظ باستخدام كوده المكون من 4 أرقام")
+    async def get_embed(self, interaction: discord.Interaction, code: str):
+        row = await db.get_embed_by_code(code)
+        if not row:
+            await interaction.response.send_message("❌ لم يتم العثور على أي إمبد بهذا الكود!", ephemeral=True)
+            return
+        
+        try:
+            embed_dict = json.loads(row['embed_data'])
+            embed = discord.Embed.from_dict(embed_dict)
+            await interaction.response.send_message(embed=embed)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ حدث خطأ أثناء استرجاع الإمبد: {e}", ephemeral=True)
 
     @app_commands.command(name="user", description="عرض معلومات الحساب وتاريخ انضمامه للديسكورد والسيرفر")
     async def user(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
