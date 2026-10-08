@@ -10,28 +10,7 @@ class Events(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if not message.guild:
-            return
-
-        # التقاط الإمبدات الصادرة من البوت وحفظها بكود من 4 أرقام
-        if message.author == self.bot.user:
-            if message.embeds:
-                for embed in message.embeds:
-                    if embed.footer and embed.footer.text and "كود الإمبد:" in embed.footer.text:
-                        continue
-                    
-                    code = await db.save_embed(message.guild.id, message.channel.id, message.id, embed)
-                    
-                    try:
-                        current_footer = embed.footer.text if embed.footer and embed.footer.text else ""
-                        new_footer = f"{current_footer} | كود الإمبد: {code}".strip(" |")
-                        embed.set_footer(text=new_footer, icon_url=embed.footer.icon_url if embed.footer else None)
-                        await message.edit(embed=embed)
-                    except Exception:
-                        pass
-            return
-
-        if message.author.bot:
+        if message.author.bot or not message.guild:
             return
 
         g_id = message.guild.id
@@ -43,6 +22,7 @@ class Events(commands.Cog):
             content_lower = message.content.lower()
             badwords = [w.strip().lower() for w in settings['automod_badwords'].split(',') if w.strip()]
             
+            # فحص الكلمات المحظورة
             if any(word in content_lower for word in badwords):
                 try:
                     await message.delete()
@@ -51,6 +31,7 @@ class Events(commands.Cog):
                 except Exception:
                     pass
 
+            # فحص الروابط
             if settings['anti_links'] and ("http://" in content_lower or "https://" in content_lower):
                 try:
                     await message.delete()
@@ -59,6 +40,7 @@ class Events(commands.Cog):
                 except Exception:
                     pass
 
+            # فحص دعوات السيرفرات
             if settings['anti_invites'] and ("discord.gg/" in content_lower or "discord.com/invite/" in content_lower):
                 try:
                     await message.delete()
@@ -87,6 +69,7 @@ class Events(commands.Cog):
         if settings['text_xp_enabled']:
             user_data = await db.get_user_data(g_id, u_id)
             now = time.time()
+            # كولد داون دقيقة بين كل احتساب خبرة
             if now - user_data['last_msg_timestamp'] >= 60:
                 xp_rate = settings['text_xp_rate'] or 15
                 leveled_up, new_lvl = await db.add_text_xp(g_id, u_id, xp_rate)
@@ -114,9 +97,11 @@ class Events(commands.Cog):
         if not settings['voice_xp_enabled']:
             return
 
+        # دخول روم صوتي
         if before.channel is None and after.channel is not None:
             self.voice_times[key] = time.time()
 
+        # خروج من روم صوتي
         elif before.channel is not None and after.channel is None:
             start_time = self.voice_times.pop(key, None)
             if start_time:
@@ -138,6 +123,7 @@ class Events(commands.Cog):
         g_id = member.guild.id
         settings = await db.get_guild_settings(g_id)
 
+        # إعطاء الرتبة التلقائية
         if settings['auto_role_id']:
             role = member.guild.get_role(settings['auto_role_id'])
             if role:
@@ -146,6 +132,7 @@ class Events(commands.Cog):
                 except Exception:
                     pass
 
+        # إرسال رسالة الترحب
         if settings['welcome_channel_id']:
             channel = member.guild.get_channel(settings['welcome_channel_id'])
             if channel:
@@ -162,6 +149,7 @@ class Events(commands.Cog):
         g_id = member.guild.id
         settings = await db.get_guild_settings(g_id)
 
+        # إرسال رسالة المغادرة
         if settings['leave_channel_id']:
             channel = member.guild.get_channel(settings['leave_channel_id'])
             if channel:
