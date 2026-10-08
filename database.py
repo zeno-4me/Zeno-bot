@@ -4,8 +4,6 @@ import time
 from datetime import datetime
 import discord
 import os
-import json
-import random
 
 class Database:
     def __init__(self, db_url: str = None):
@@ -122,17 +120,9 @@ class Database:
                     amount INT,
                     timestamp DOUBLE PRECISION
                 );
-
-                CREATE TABLE IF NOT EXISTS saved_embeds (
-                    code VARCHAR(4) PRIMARY KEY,
-                    guild_id BIGINT,
-                    channel_id BIGINT,
-                    message_id BIGINT,
-                    embed_data TEXT,
-                    created_at DOUBLE PRECISION
-                );
             """)
 
+            # 2. التحديث التلقائي: محاولة إضافة الأعمدة الجديدة إذا لم تكن موجودة في الجدول القديم
             alter_queries = [
                 "ALTER TABLE guild_settings ADD COLUMN text_xp_enabled INT DEFAULT 1;",
                 "ALTER TABLE guild_settings ADD COLUMN voice_xp_enabled INT DEFAULT 1;",
@@ -150,29 +140,8 @@ class Database:
                 try:
                     await conn.execute(query)
                 except asyncpg.exceptions.DuplicateColumnError:
+                    # يتم تجاهل الخطأ بأمان إذا كان العمود موجوداً بالفعل
                     pass
-
-    async def save_embed(self, guild_id: int, channel_id: int, message_id: int, embed: discord.Embed) -> str:
-        await self._ensure_connection()
-        embed_dict = embed.to_dict()
-        embed_json = json.dumps(embed_dict, ensure_ascii=False)
-        
-        async with self.pool.acquire() as conn:
-            for _ in range(100):
-                code = f"{random.randint(0, 9999):04d}"
-                exists = await conn.fetchval("SELECT 1 FROM saved_embeds WHERE code = $1", code)
-                if not exists:
-                    await conn.execute("""
-                        INSERT INTO saved_embeds (code, guild_id, channel_id, message_id, embed_data, created_at)
-                        VALUES ($1, $2, $3, $4, $5, $6)
-                    """, code, guild_id, channel_id, message_id, embed_json, time.time())
-                    return code
-        return "0000"
-
-    async def get_embed_by_code(self, code: str):
-        await self._ensure_connection()
-        async with self.pool.acquire() as conn:
-            return await conn.fetchrow("SELECT * FROM saved_embeds WHERE code = $1", code)
 
     async def get_guild_settings(self, guild_id: int):
         await self._ensure_connection()
