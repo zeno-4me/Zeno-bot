@@ -122,7 +122,7 @@ class Database:
                 );
             """)
 
-            # 2. التحديث التلقائي: محاولة إضافة الأعمدة الجديدة إذا لم تكن موجودة في الجدول القديم
+            # 2. التحديث التلقائي للأعمدة إذا لم تكن موجودة
             alter_queries = [
                 "ALTER TABLE guild_settings ADD COLUMN text_xp_enabled INT DEFAULT 1;",
                 "ALTER TABLE guild_settings ADD COLUMN voice_xp_enabled INT DEFAULT 1;",
@@ -140,7 +140,6 @@ class Database:
                 try:
                     await conn.execute(query)
                 except asyncpg.exceptions.DuplicateColumnError:
-                    # يتم تجاهل الخطأ بأمان إذا كان العمود موجوداً بالفعل
                     pass
 
     async def get_guild_settings(self, guild_id: int):
@@ -363,7 +362,15 @@ class Database:
                 GROUP BY activity_type
             """, guild_id, user_id, start_time)
             
-        stats = {'text_xp': 0, 'voice_xp': 0, 'image_count': 0, 'video_count': 0, 'video_duration': 0}
+        # شملنا كل المفاتيح عشان ما يصير أي Key Error أبداً
+        stats = {
+            'text_xp': 0, 
+            'voice_xp': 0, 
+            'message_count': 0, 
+            'image_count': 0, 
+            'video_count': 0, 
+            'video_duration': 0
+        }
         for row in results:
             act_type = row['activity_type']
             total = row['total']
@@ -399,7 +406,7 @@ db = Database()
 def calculate_next_level_xp(level: int) -> int:
     return (level ** 2) * 100
 
-def create_progress_bar(current: int, total: int, length: int = 10) -> str:
+def create_progress_bar(current: int, total: int, length: int = 10) -> status if False else str:
     percentage = min(1.0, max(0.0, current / total))
     filled = int(percentage * length)
     return "■" * filled + "□" * (length - filled)
