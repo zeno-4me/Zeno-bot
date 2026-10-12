@@ -143,7 +143,7 @@ class Leveling(commands.Cog):
             desc = ""
             for idx, r in enumerate(rows, 1):
                 m = interaction.guild.get_member(r['user_id'])
-                total_user_xp = r['text_xp'] + r['voice_xp']  # text_xp + voice_xp
+                total_user_xp = r['text_xp'] + r['voice_xp']
                 main_lvl = int(math.sqrt(total_user_xp / 100)) + 1
                 desc += f"**#{idx}** | {m.mention if m else 'عضو'} - Level `{main_lvl}` (`{total_user_xp:,}` XP)\n"
             embed.description = desc if desc else "لا توجد بيانات متاحة."
