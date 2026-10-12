@@ -65,7 +65,18 @@ class Events(commands.Cog):
             if mapped_cmd:
                 await message.channel.send(f"💡 هذا اختصار للأمر: `/{mapped_cmd}`")
 
-        # 4. نظام الخبرة واللفلات للرسائل (Text XP)
+        # 4. تسجيل عدد الرسائل للوقت والإحصائيات
+        await db.log_activity(g_id, u_id, "message_count", 1)
+
+        # 5. فحص الصور والفيديوهات المرفقة لتسجيلها بالإحصائيات التفصيلية
+        if message.attachments:
+            for attachment in message.attachments:
+                if any(ext in attachment.filename.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                    await db.log_activity(g_id, u_id, "image_count", 1)
+                elif any(ext in attachment.filename.lower() for ext in ['.mp4', '.mov', '.mkv', '.avi']):
+                    await db.log_activity(g_id, u_id, "video_count", 1)
+
+        # 6. نظام الخبرة واللفلات للرسائل (Text XP)
         if settings['text_xp_enabled']:
             user_data = await db.get_user_data(g_id, u_id)
             now = time.time()
