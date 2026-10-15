@@ -7,22 +7,15 @@ import os
 
 class Database:
     def __init__(self, db_url: str = None):
-        raw_url = db_url or os.getenv("DATABASE_URL")
-        if raw_url and raw_url.startswith("postgres://"):
-            raw_url = raw_url.replace("postgres://", "postgresql://", 1)
-        self.db_url = raw_url
+        self.db_url = db_url or os.getenv("DATABASE_URL")
         self.pool = None
 
     async def connect(self):
         if not self.pool:
-            raw_url = self.db_url or os.getenv("DATABASE_URL")
-            if raw_url and raw_url.startswith("postgres://"):
-                raw_url = raw_url.replace("postgres://", "postgresql://", 1)
-            self.db_url = raw_url
-            
+            self.db_url = self.db_url or os.getenv("DATABASE_URL")
             if not self.db_url:
                 raise ValueError("DATABASE_URL environment variable is missing!")
-            self.pool = await asyncpg.create_pool(self.db_url, timeout=10)
+            self.pool = await asyncpg.create_pool(self.db_url)
             await self._create_tables()
 
     async def _ensure_connection(self):
@@ -34,6 +27,7 @@ class Database:
 
     async def _create_tables(self):
         async with self.pool.acquire() as conn:
+            # 1. إنشاء الجداول الأساسية
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS guild_settings (
                     guild_id BIGINT PRIMARY KEY,
@@ -127,6 +121,26 @@ class Database:
                     timestamp DOUBLE PRECISION
                 );
             """)
+
+            # 2. التحديث التلقائي للأعمدة إذا لم تكن موجودة
+            alter_queries = [
+                "ALTER TABLE guild_settings ADD COLUMN text_xp_enabled INT DEFAULT 1;",
+                "ALTER TABLE guild_settings ADD COLUMN voice_xp_enabled INT DEFAULT 1;",
+                "ALTER TABLE guild_settings ADD COLUMN text_xp_rate INT DEFAULT 15;",
+                "ALTER TABLE guild_settings ADD COLUMN voice_xp_rate INT DEFAULT 10;",
+                "ALTER TABLE guild_settings ADD COLUMN level_up_channel_id BIGINT DEFAULT 0;",
+                "ALTER TABLE guild_settings ADD COLUMN automod_enabled INT DEFAULT 1;",
+                "ALTER TABLE guild_settings ADD COLUMN automod_badwords TEXT DEFAULT '';",
+                "ALTER TABLE guild_settings ADD COLUMN anti_links INT DEFAULT 0;",
+                "ALTER TABLE guild_settings ADD COLUMN anti_invites INT DEFAULT 0;",
+                "ALTER TABLE guild_settings ADD COLUMN anti_spam INT DEFAULT 0;"
+            ]
+
+            for query in alter_queries:
+                try:
+                    await conn.execute(query)
+                except asyncpg.exceptions.DuplicateColumnError:
+                    pass
 
     async def get_guild_settings(self, guild_id: int):
         await self._ensure_connection()
@@ -348,6 +362,7 @@ class Database:
                 GROUP BY activity_type
             """, guild_id, user_id, start_time)
             
+        # شملنا كل المفاتيح عشان ما يصير أي Key Error أبداً
         stats = {
             'text_xp': 0, 
             'voice_xp': 0, 
@@ -391,7 +406,7 @@ db = Database()
 def calculate_next_level_xp(level: int) -> int:
     return (level ** 2) * 100
 
-def create_progress_bar(current: int, total: int, length: int = 10) -> str:
+def create_progress_bar(current: int, total: int, length: int = 10) -> status if False else str:
     percentage = min(1.0, max(0.0, current / total))
     filled = int(percentage * length)
     return "■" * filled + "□" * (length - filled)
