@@ -127,7 +127,7 @@ class EmbedFooterModal(discord.ui.Modal, title="تعديل الفوتر والم
 
 class AdvancedEmbedBuilderView(discord.ui.View):
     def __init__(self, author: discord.Member):
-        super().__init__(timeout=300)
+        super().__init__(timeout=None)
         self.author = author
         self.current_embed = discord.Embed(description="أهلاً بك في صانع الإمبد المتقدم!\nاضغط على الأزرار في الأسفل لتعديل أي جزء تفصيلي في هذه الرسالة.", color=discord.Color.blurple())
 
