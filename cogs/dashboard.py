@@ -225,7 +225,7 @@ class GeneralSettingsView(discord.ui.View):
     async def edit_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditLeaveModal())
 
-    @discord.ui.button(label="الرجوع للصفحة للرئيسية", style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label="الرجوع للصفحة الرئيسية", style=discord.ButtonStyle.secondary, row=4)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=MainDashboardView())
@@ -327,7 +327,7 @@ class TicketSettingsView(discord.ui.View):
         await interaction.channel.send(embed=embed, view=OpenTicketView())
         await interaction.response.send_message("✅ تم نشر بنل التذاكر بنجاح!", ephemeral=True)
 
-    @discord.ui.button(label="الرجوع للصفحه الرئيسية", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="الرجوع للصفحة الرئيسية", style=discord.ButtonStyle.secondary, row=2)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=MainDashboardView())
