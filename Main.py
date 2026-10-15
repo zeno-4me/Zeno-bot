@@ -42,7 +42,10 @@ class ZenoBot(commands.Bot):
 
         # تسجيل الـ Persistent Views عشان أزرار التذاكر ما تعطّل بعد ريستارت البوت
         try:
-            from dashboard import OpenTicketView, CloseTicketView
+            if os.path.isdir("./cogs"):
+                from cogs.dashboard import OpenTicketView, CloseTicketView
+            else:
+                from dashboard import OpenTicketView, CloseTicketView
             self.add_view(OpenTicketView())
             self.add_view(CloseTicketView())
         except Exception as e:
