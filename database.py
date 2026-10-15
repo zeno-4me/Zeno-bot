@@ -7,12 +7,20 @@ import os
 
 class Database:
     def __init__(self, db_url: str = None):
-        self.db_url = db_url or os.getenv("DATABASE_URL")
+        raw_url = db_url or os.getenv("DATABASE_URL")
+        # تصحيح البادئة تلقائياً لتتوافق مع asyncpg وتجنب مشاكل الاتصال
+        if raw_url and raw_url.startswith("postgres://"):
+            raw_url = raw_url.replace("postgres://", "postgresql://", 1)
+        self.db_url = raw_url
         self.pool = None
 
     async def connect(self):
         if not self.pool:
-            self.db_url = self.db_url or os.getenv("DATABASE_URL")
+            raw_url = self.db_url or os.getenv("DATABASE_URL")
+            if raw_url and raw_url.startswith("postgres://"):
+                raw_url = raw_url.replace("postgres://", "postgresql://", 1)
+            self.db_url = raw_url
+            
             if not self.db_url:
                 raise ValueError("DATABASE_URL environment variable is missing!")
             self.pool = await asyncpg.create_pool(self.db_url)
@@ -362,7 +370,6 @@ class Database:
                 GROUP BY activity_type
             """, guild_id, user_id, start_time)
             
-        # شملنا كل المفاتيح عشان ما يصير أي Key Error أبداً
         stats = {
             'text_xp': 0, 
             'voice_xp': 0, 
@@ -406,7 +413,7 @@ db = Database()
 def calculate_next_level_xp(level: int) -> int:
     return (level ** 2) * 100
 
-def create_progress_bar(current: int, total: int, length: int = 10) -> status if False else str:
+def create_progress_bar(current: int, total: int, length: int = 10) -> str:
     percentage = min(1.0, max(0.0, current / total))
     filled = int(percentage * length)
     return "■" * filled + "□" * (length - filled)
