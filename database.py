@@ -8,7 +8,6 @@ import os
 class Database:
     def __init__(self, db_url: str = None):
         raw_url = db_url or os.getenv("DATABASE_URL")
-        # تصحيح البادئة تلقائياً لتتوافق مع asyncpg وتجنب مشاكل الاتصال
         if raw_url and raw_url.startswith("postgres://"):
             raw_url = raw_url.replace("postgres://", "postgresql://", 1)
         self.db_url = raw_url
@@ -23,7 +22,7 @@ class Database:
             
             if not self.db_url:
                 raise ValueError("DATABASE_URL environment variable is missing!")
-            self.pool = await asyncpg.create_pool(self.db_url)
+            self.pool = await asyncpg.create_pool(self.db_url, timeout=10)
             await self._create_tables()
 
     async def _ensure_connection(self):
@@ -35,7 +34,6 @@ class Database:
 
     async def _create_tables(self):
         async with self.pool.acquire() as conn:
-            # 1. إنشاء الجداول الأساسية
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS guild_settings (
                     guild_id BIGINT PRIMARY KEY,
@@ -129,26 +127,6 @@ class Database:
                     timestamp DOUBLE PRECISION
                 );
             """)
-
-            # 2. التحديث التلقائي للأعمدة إذا لم تكن موجودة
-            alter_queries = [
-                "ALTER TABLE guild_settings ADD COLUMN text_xp_enabled INT DEFAULT 1;",
-                "ALTER TABLE guild_settings ADD COLUMN voice_xp_enabled INT DEFAULT 1;",
-                "ALTER TABLE guild_settings ADD COLUMN text_xp_rate INT DEFAULT 15;",
-                "ALTER TABLE guild_settings ADD COLUMN voice_xp_rate INT DEFAULT 10;",
-                "ALTER TABLE guild_settings ADD COLUMN level_up_channel_id BIGINT DEFAULT 0;",
-                "ALTER TABLE guild_settings ADD COLUMN automod_enabled INT DEFAULT 1;",
-                "ALTER TABLE guild_settings ADD COLUMN automod_badwords TEXT DEFAULT '';",
-                "ALTER TABLE guild_settings ADD COLUMN anti_links INT DEFAULT 0;",
-                "ALTER TABLE guild_settings ADD COLUMN anti_invites INT DEFAULT 0;",
-                "ALTER TABLE guild_settings ADD COLUMN anti_spam INT DEFAULT 0;"
-            ]
-
-            for query in alter_queries:
-                try:
-                    await conn.execute(query)
-                except asyncpg.exceptions.DuplicateColumnError:
-                    pass
 
     async def get_guild_settings(self, guild_id: int):
         await self._ensure_connection()
