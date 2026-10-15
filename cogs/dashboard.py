@@ -235,6 +235,9 @@ class DashboardSelectMenu(discord.ui.Select):
         super().__init__(placeholder="📂 اختر القسم للتحكم به...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        # منع خطأ المهلة (3 ثواني) فوراً
+        await interaction.response.defer()
+
         sel = self.values[0]
         st = await db.get_guild_settings(interaction.guild_id)
 
@@ -242,32 +245,32 @@ class DashboardSelectMenu(discord.ui.Select):
             embed = discord.Embed(title="👋 إعدادات الترحيب والمغادرة", color=discord.Color.green())
             embed.add_field(name="رسالة الترحيب الحالية", value=f"`{st['welcome_msg']}`", inline=False)
             embed.add_field(name="رسالة المغادرة الحالية", value=f"`{st['leave_msg']}`", inline=False)
-            await interaction.response.edit_message(embed=embed, view=GeneralSettingsView())
+            await interaction.edit_original_response(embed=embed, view=GeneralSettingsView())
 
         elif sel == "automod":
             embed = discord.Embed(title="🛡️ إعدادات الحماية", color=discord.Color.red())
             embed.add_field(name="الحماية العامة", value="✅ مفعلة" if st['automod_enabled'] else "❌ معطلة", inline=True)
             embed.add_field(name="منع الروابط", value="✅ مفعل" if st['anti_links'] else "❌ معطل", inline=True)
             embed.add_field(name="منع الدعوات", value="✅ مفعل" if st['anti_invites'] else "❌ معطل", inline=True)
-            await interaction.response.edit_message(embed=embed, view=AutoModSettingsView())
+            await interaction.edit_original_response(embed=embed, view=AutoModSettingsView())
 
         elif sel == "xp":
             embed = discord.Embed(title="⭐ إعدادات نظام اللفل", color=discord.Color.gold())
             embed.add_field(name="معدل الكتابة", value=f"`{st['text_xp_rate']}` XP", inline=True)
             embed.add_field(name="معدل الصوت", value=f"`{st['voice_xp_rate']}` XP", inline=True)
-            await interaction.response.edit_message(embed=embed, view=XPSettingsView())
+            await interaction.edit_original_response(embed=embed, view=XPSettingsView())
 
         elif sel == "tickets":
             embed = discord.Embed(title="🎟️ إعدادات التذاكر", color=discord.Color.blue())
             embed.description = "اضغط على الزر أدناه لنشر بنل التذاكر في هذه القناة."
-            await interaction.response.edit_message(embed=embed, view=TicketSettingsView())
+            await interaction.edit_original_response(embed=embed, view=TicketSettingsView())
 
         elif sel == "auto_responses":
             embed = discord.Embed(title="🤖 الردود التلقائية والأزرار", color=discord.Color.purple())
             responses = await db.get_auto_responses(interaction.guild_id)
             resp_str = "\n".join([f"• `{r['trigger_text']}`" for r in responses[:10]]) if responses else "لا توجد ردود"
             embed.add_field(name="💬 الردود الحالية", value=resp_str, inline=False)
-            await interaction.response.edit_message(embed=embed, view=AutoResponseView())
+            await interaction.edit_original_response(embed=embed, view=AutoResponseView())
 
 
 class MainDashboardView(discord.ui.View):
