@@ -176,7 +176,8 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute(f"UPDATE guild_settings SET {column} = $1 WHERE guild_id = $2", value, guild_id)
 
-    async def save_custom_embed(self, guild_id: int, embed_name: str, embed_dict: dict):
+    # --- نظام متغيرات الإمبدز وقائمة روابط الرسائل (Message URLs) ---
+    async def save_custom_embed(self, guild_id: int, embed_name: str, embed_dict: dict, new_message_url: str = None):
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT custom_embeds FROM guild_settings WHERE guild_id = $1", guild_id)
@@ -187,7 +188,20 @@ class Database:
                 except:
                     embeds = {}
             
-            embeds[embed_name] = embed_dict
+            # جلب أو إنشاء سجل المتغير الحالي
+            current_data = embeds.get(embed_name, {})
+            if not isinstance(current_data, dict):
+                current_data = {"embed": current_data, "message_urls": []}
+            
+            urls_list = current_data.get("message_urls", [])
+            if new_message_url and new_message_url not in urls_list:
+                urls_list.append(new_message_url)
+
+            # تحديث الداتا مع الحفاظ على الروابط
+            current_data["embed"] = embed_dict
+            current_data["message_urls"] = urls_list
+            
+            embeds[embed_name] = current_data
             await conn.execute("UPDATE guild_settings SET custom_embeds = $1 WHERE guild_id = $2", json.dumps(embeds), guild_id)
 
     async def get_custom_embed(self, guild_id: int, embed_name: str):
@@ -197,7 +211,11 @@ class Database:
             if row and row['custom_embeds']:
                 try:
                     embeds = json.loads(row['custom_embeds'])
-                    return embeds.get(embed_name)
+                    data = embeds.get(embed_name)
+                    if isinstance(data, dict):
+                        return data
+                    elif data:
+                        return {"embed": data, "message_urls": []}
                 except:
                     return None
             return None
@@ -208,11 +226,32 @@ class Database:
             row = await conn.fetchrow("SELECT custom_embeds FROM guild_settings WHERE guild_id = $1", guild_id)
             if row and row['custom_embeds']:
                 try:
-                    return json.loads(row['custom_embeds'])
+                    raw_embeds = json.loads(row['custom_embeds'])
+                    formatted = {}
+                    for name, data in raw_embeds.items():
+                        if isinstance(data, dict) and "embed" in data:
+                            formatted[name] = data
+                        else:
+                            formatted[name] = {"embed": data, "message_urls": []}
+                    return formatted
                 except:
                     return {}
             return {}
 
+    async def delete_custom_embed(self, guild_id: int, embed_name: str):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT custom_embeds FROM guild_settings WHERE guild_id = $1", guild_id)
+            if row and row['custom_embeds']:
+                try:
+                    embeds = json.loads(row['custom_embeds'])
+                    if embed_name in embeds:
+                        del embeds[embed_name]
+                        await conn.execute("UPDATE guild_settings SET custom_embeds = $1 WHERE guild_id = $2", json.dumps(embeds), guild_id)
+                except:
+                    pass
+
+    # --- باقي الجداول والدوال (لفل، اقتصاد، حماية، إلخ) ---
     async def add_level_reward(self, guild_id: int, level: int, role_id: int):
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
