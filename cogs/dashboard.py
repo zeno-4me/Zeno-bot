@@ -155,7 +155,6 @@ class AdvancedEmbedBuilderView(discord.ui.View):
 
     @discord.ui.button(label="💾 حفظ الإمبد في قاعدة البيانات", style=discord.ButtonStyle.success, row=1)
     async def save_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # حفظ الإمبد كإعداد خاص بالتذاكر أو غيره
         await db.save_custom_embed(interaction.guild_id, self.embed_name, self.current_embed.to_dict())
         await interaction.response.send_message("✅ تم حفظ وتحديث الإمبد في قائمة الإمبدز بنجاح!", ephemeral=True)
 
@@ -257,21 +256,21 @@ class AutoModSettingsView(discord.ui.View):
     @discord.ui.button(label="تبديل الحماية العامة", style=discord.ButtonStyle.danger, row=0)
     async def toggle_automod(self, interaction: discord.Interaction, button: discord.ui.Button):
         st = await db.get_guild_settings(interaction.guild_id)
-        new_val = 0 if st['automod_enabled'] else 1
+        new_val = 0 if st.get('automod_enabled') else 1
         await db.update_guild_setting(interaction.guild_id, "automod_enabled", new_val)
         await interaction.response.send_message(f"تم {'تفعيل' if new_val else 'تعطيل'} نظام الحماية العام!", ephemeral=True)
 
     @discord.ui.button(label="منع الروابط (Anti-Links)", style=discord.ButtonStyle.primary, row=0)
     async def toggle_links(self, interaction: discord.Interaction, button: discord.ui.Button):
         st = await db.get_guild_settings(interaction.guild_id)
-        new_val = 0 if st['anti_links'] else 1
+        new_val = 0 if st.get('anti_links') else 1
         await db.update_guild_setting(interaction.guild_id, "anti_links", new_val)
         await interaction.response.send_message(f"تم {'تفعيل' if new_val else 'تعطيل'} مانع الروابط الخارجية!", ephemeral=True)
 
     @discord.ui.button(label="منع دعوات الديسكورد (Anti-Invites)", style=discord.ButtonStyle.primary, row=0)
     async def toggle_invites(self, interaction: discord.Interaction, button: discord.ui.Button):
         st = await db.get_guild_settings(interaction.guild_id)
-        new_val = 0 if st['anti_invites'] else 1
+        new_val = 0 if st.get('anti_invites') else 1
         await db.update_guild_setting(interaction.guild_id, "anti_invites", new_val)
         await interaction.response.send_message(f"تم {'تفعيل' if new_val else 'تعطيل'} مانع دعوات السيرفرات!", ephemeral=True)
 
@@ -391,7 +390,6 @@ class OpenTicketView(discord.ui.View):
 
         channel = await guild.create_text_channel(name=f"ticket-{interaction.user.name}", category=category, overwrites=overwrites)
         
-        # جلب الإمبد الداخلي المخصص للتذاكر أو استخدام الإمبد الافتراضي
         saved_data = await db.get_custom_embed(guild.id, "ticket_internal")
         if saved_data:
             embed = discord.Embed.from_dict(saved_data)
@@ -485,7 +483,7 @@ class DashboardSelectMenu(discord.ui.Select):
             await interaction.response.edit_message(embed=embed, view=XPSettingsView())
 
         elif sel == "tickets":
-            embed = discord.Embed(title="🎟️ إعدادات نظام التذاكر والإمبدز", color=discord.Color.blue())
+            embed = discord.Embed(title="🎟️ إعدادات نظام التذاكر", color=discord.Color.blue())
             t_cat = interaction.guild.get_channel(st.get('ticket_category_id', 0))
             t_log = interaction.guild.get_channel(st.get('ticket_log_channel_id', 0))
             
