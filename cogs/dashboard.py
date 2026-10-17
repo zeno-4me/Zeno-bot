@@ -1,10 +1,20 @@
 import asyncio
 from datetime import datetime
 import random
+import re
 import discord
 from discord import app_commands
 from discord.ext import commands
 from database import db
+
+# دالة مساعدة لاستخراج آيدي القناة وآيدي الرسالة من رابط الرسالة (Message URL)
+def parse_discord_message_url(url: str):
+    # رابط ديسكورد القياسي: https://discord.com/channels/{guild_id}/{channel_id}/{message_id}
+    pattern = r"https://(?:ptb\.|canary\.)?discord\.com/channels/(\d+)/(\d+)/(\d+)"
+    match = re.search(pattern, url.strip())
+    if match:
+        return int(match.group(1)), int(match.group(2)), int(match.group(3))
+    return None, None, None
 
 # Modals
 class EditWelcomeModal(discord.ui.Modal, title="تعديل رسالة الترحيب"):
@@ -130,17 +140,66 @@ class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمب
             return
 
         self.builder_view.embed_name = name
+        view = TicketDeployView({"ticket_mode": self.builder_view.ticket_mode, "ticket_options": self.builder_view.ticket_options}) if self.builder_view.has_ticket_button else None
+        
+        sent_msg = await interaction.channel.send(embed=self.builder_view.current_embed, view=view)
+        
         data = {
             "embed": self.builder_view.current_embed.to_dict(),
             "has_ticket": self.builder_view.has_ticket_button,
             "ticket_mode": self.builder_view.ticket_mode,
-            "ticket_options": self.builder_view.ticket_options
+            "ticket_options": self.builder_view.ticket_options,
+            "message_url": sent_msg.jump_url
         }
         await db.save_custom_embed(interaction.guild_id, name, data)
+        await interaction.followup.send(f"✅ تم حفظ الإمبد باسم `{name}` وإرساله بنجاح! تم التجهيز بالتحديث التلقائي.", ephemeral=True)
 
-        view = TicketDeployView(data) if self.builder_view.has_ticket_button else None
-        await interaction.channel.send(embed=self.builder_view.current_embed, view=view)
-        await interaction.followup.send(f"✅ تم حفظ الإمبد باسم `{name}` وإرساله بنجاح إلى القناة!", ephemeral=True)
+class ApplyEmbedEditModal(discord.ui.Modal, title="تطبيق التعديل على الرسالة الأصلية"):
+    url_input = discord.ui.TextInput(label="رابط الرسالة الأصلية (Message URL)", placeholder="https://discord.com/channels/...", required=False)
+
+    def __init__(self, builder_view):
+        super().__init__()
+        self.builder_view = builder_view
+        if builder_view.saved_message_url:
+            self.url_input.default = builder_view.saved_message_url
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        target_url = self.url_input.value.strip() or self.builder_view.saved_message_url
+        
+        if not target_url:
+            await interaction.followup.send("❌ يرجى توفير رابط الرسالة المراد تعديلها!", ephemeral=True)
+            return
+
+        guild_id, channel_id, message_id = parse_discord_message_url(target_url)
+        if not channel_id or not message_id:
+            await interaction.followup.send("❌ صيغة رابط الرسالة غير صحيحة!", ephemeral=True)
+            return
+
+        channel = interaction.guild.get_channel(channel_id)
+        if not channel:
+            await interaction.followup.send("❌ لم يتم العثور على القناة في السيرفر!", ephemeral=True)
+            return
+
+        try:
+            target_msg = await channel.fetch_message(message_id)
+            view = TicketDeployView({"ticket_mode": self.builder_view.ticket_mode, "ticket_options": self.builder_view.ticket_options}) if self.builder_view.has_ticket_button else None
+            
+            await target_msg.edit(embed=self.builder_view.current_embed, view=view)
+            
+            # تحديث الداتا المحفوظة
+            data = {
+                "embed": self.builder_view.current_embed.to_dict(),
+                "has_ticket": self.builder_view.has_ticket_button,
+                "ticket_mode": self.builder_view.ticket_mode,
+                "ticket_options": self.builder_view.ticket_options,
+                "message_url": target_url
+            }
+            await db.save_custom_embed(interaction.guild_id, self.builder_view.embed_name, data)
+            
+            await interaction.followup.send(f"🔄 تم تطبيق التعديلات بنجاح على الرسالة الأصلية!", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ متعذر تعديل الرسالة، قد تكون محذوفة أو يفتقد البوت لصلاحية التعديل عليها: {e}", ephemeral=True)
 
 class TicketOptionSettingsModal(discord.ui.Modal, title="إعدادات زر/خيار التذكرة"):
     btn_label = discord.ui.TextInput(label="نص الزر / اسم الخيار", placeholder="مثال: 🎟️ تذكرة المساعدة", required=True)
@@ -163,7 +222,7 @@ class TicketOptionSettingsModal(discord.ui.Modal, title="إعدادات زر/خ�
         await interaction.response.send_message(f"✅ تم تحديث اسم الزر/الخيار إلى: `{lbl}`.", ephemeral=True)
 
 class AdvancedEmbedBuilderView(discord.ui.View):
-    def __init__(self, author: discord.Member, embed_name: str = "custom", default_embed: discord.Embed = None, has_ticket: bool = False, ticket_mode: str = "button", ticket_options: dict = None, is_internal_ticket: bool = False):
+    def __init__(self, author: discord.Member, embed_name: str = "custom", default_embed: discord.Embed = None, has_ticket: bool = False, ticket_mode: str = "button", ticket_options: dict = None, is_internal_ticket: bool = False, saved_message_url: str = None):
         super().__init__(timeout=300)
         self.author = author
         self.embed_name = embed_name
@@ -171,6 +230,7 @@ class AdvancedEmbedBuilderView(discord.ui.View):
         self.ticket_mode = ticket_mode
         self.ticket_options = ticket_options or {"default": {"label": "فتح تذكرة جديدة 📩", "category_id": 0, "log_channel_id": 0, "support_roles": [], "embed": {}}}
         self.is_internal_ticket = is_internal_ticket
+        self.saved_message_url = saved_message_url
         self.current_embed = default_embed or discord.Embed(
             title="📌 صانع الإمبدز",
             description="مرحباً بك في قسم الإمبدز! تعديل الأساسيات يشمل العنوان، الوصف، اللون والفوتر.", 
@@ -230,11 +290,11 @@ class AdvancedEmbedBuilderView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, view=TicketConfigControlView(self), ephemeral=True)
 
-    @discord.ui.button(label="🎭", style=discord.ButtonStyle.secondary, row=1)
-    async def role_button_placeholder(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("🚧 نظام رتب الأزرار قيد التجهيز وسيتم تفعيله قريباً!", ephemeral=True)
+    @discord.ui.button(label="🔄 تطبيق التعديل على الرسالة الأصلية", style=discord.ButtonStyle.primary, row=1)
+    async def apply_edit_to_original(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ApplyEmbedEditModal(self))
 
-    @discord.ui.button(label="إرسال الإمبد", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="إرسال كـ إمبد جديد", style=discord.ButtonStyle.danger, row=1)
     async def prompt_send_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EmbedNameModal(self))
 
@@ -328,13 +388,6 @@ class ChannelSelectMenu(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction):
         channel = self.values[0]
-        if self.setting_key.startswith("opt_cat_"):
-            opt_key = self.setting_key.replace("opt_cat_", "")
-            view = interaction.client.get_cog("Dashboard") # update inside view context
-            # update in active builder view if accessible or database
-        elif self.setting_key.startswith("opt_log_"):
-            opt_key = self.setting_key.replace("opt_log_", "")
-        
         await db.update_guild_setting(interaction.guild_id, self.setting_key, channel.id)
         await interaction.response.send_message(f"✅ تم تحديد القناة: {channel.mention}", ephemeral=True)
 
@@ -345,9 +398,6 @@ class CategorySelectMenu(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction):
         category = self.values[0]
-        if self.setting_key.startswith("opt_cat_"):
-            opt_key = self.setting_key.replace("opt_cat_", "")
-            # سيتم حفظها في خيارات الإمبد الفعالة
         await db.update_guild_setting(interaction.guild_id, self.setting_key, category.id)
         await interaction.response.send_message(f"✅ تم تحديد الفئة (Category): **{category.name}**", ephemeral=True)
 
@@ -507,6 +557,7 @@ class EmbedsSectionView(discord.ui.View):
             has_btn = saved_data.get("has_ticket", False)
             t_mode = saved_data.get("ticket_mode", "button")
             t_opts = saved_data.get("ticket_options", None)
+            saved_url = saved_data.get("message_url", None)
         else:
             default_emb = discord.Embed(
                 title="📌 صانع الإمبدز", 
@@ -516,8 +567,18 @@ class EmbedsSectionView(discord.ui.View):
             has_btn = False
             t_mode = "button"
             t_opts = None
+            saved_url = None
 
-        view = AdvancedEmbedBuilderView(author=interaction.user, embed_name="main_embed", default_embed=default_emb, has_ticket=has_btn, ticket_mode=t_mode, ticket_options=t_opts, is_internal_ticket=False)
+        view = AdvancedEmbedBuilderView(
+            author=interaction.user, 
+            embed_name="main_embed", 
+            default_embed=default_emb, 
+            has_ticket=has_btn, 
+            ticket_mode=t_mode, 
+            ticket_options=t_opts, 
+            is_internal_ticket=False,
+            saved_message_url=saved_url
+        )
         await interaction.response.send_message(embed=view.current_embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="تعديل الإمبدز القديمة والمحفوظة", style=discord.ButtonStyle.success, row=3)
@@ -555,8 +616,17 @@ class OldEmbedSelect(discord.ui.Select):
         has_btn = embed_data.get("has_ticket", False)
         t_mode = embed_data.get("ticket_mode", "button")
         t_opts = embed_data.get("ticket_options", None)
+        saved_url = embed_data.get("message_url", None)
 
-        view = AdvancedEmbedBuilderView(author=interaction.user, embed_name=selected_name, default_embed=default_emb, has_ticket=has_btn, ticket_mode=t_mode, ticket_options=t_opts)
+        view = AdvancedEmbedBuilderView(
+            author=interaction.user, 
+            embed_name=selected_name, 
+            default_embed=default_emb, 
+            has_ticket=has_btn, 
+            ticket_mode=t_mode, 
+            ticket_options=t_opts,
+            saved_message_url=saved_url
+        )
         await interaction.response.send_message(embed=view.current_embed, view=view, ephemeral=True)
 
 class OldEmbedsView(discord.ui.View):
@@ -670,7 +740,7 @@ class DashboardSelectMenu(discord.ui.Select):
 
         if sel == "embeds":
             embed = discord.Embed(
-                title="📌 قسم الإيمبدز والتذاكر المتقدمة",
+                title="📌 قسم الإيمبودز والتذاكر المتقدمة",
                 description="إدارة وصنع الإمبدز مع خيارات تفعيل أزرار التذاكر الفردية أو القوائم المنسدلة بكل استقلالية.",
                 color=discord.Color.blurple()
             )
