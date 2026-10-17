@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 import discord
 import os
+import json
 
 class Database:
     def __init__(self, db_url: str = None):
@@ -27,7 +28,6 @@ class Database:
 
     async def _create_tables(self):
         async with self.pool.acquire() as conn:
-            # 1. إنشاء الجداول الأساسية
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS guild_settings (
                     guild_id BIGINT PRIMARY KEY,
@@ -40,6 +40,8 @@ class Database:
                     ticket_category_id BIGINT DEFAULT 0,
                     ticket_log_channel_id BIGINT DEFAULT 0,
                     ticket_support_role_id BIGINT DEFAULT 0,
+                    ticket_support_role_ids TEXT DEFAULT '[]',
+                    custom_embeds TEXT DEFAULT '{}',
                     text_xp_enabled INT DEFAULT 1,
                     voice_xp_enabled INT DEFAULT 1,
                     text_xp_rate INT DEFAULT 15,
@@ -122,24 +124,25 @@ class Database:
                 );
             """)
 
-            # 2. التحديث التلقائي للأعمدة إذا لم تكن موجودة
             alter_queries = [
-                "ALTER TABLE guild_settings ADD COLUMN text_xp_enabled INT DEFAULT 1;",
-                "ALTER TABLE guild_settings ADD COLUMN voice_xp_enabled INT DEFAULT 1;",
-                "ALTER TABLE guild_settings ADD COLUMN text_xp_rate INT DEFAULT 15;",
-                "ALTER TABLE guild_settings ADD COLUMN voice_xp_rate INT DEFAULT 10;",
-                "ALTER TABLE guild_settings ADD COLUMN level_up_channel_id BIGINT DEFAULT 0;",
-                "ALTER TABLE guild_settings ADD COLUMN automod_enabled INT DEFAULT 1;",
-                "ALTER TABLE guild_settings ADD COLUMN automod_badwords TEXT DEFAULT '';",
-                "ALTER TABLE guild_settings ADD COLUMN anti_links INT DEFAULT 0;",
-                "ALTER TABLE guild_settings ADD COLUMN anti_invites INT DEFAULT 0;",
-                "ALTER TABLE guild_settings ADD COLUMN anti_spam INT DEFAULT 0;"
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS text_xp_enabled INT DEFAULT 1;",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS voice_xp_enabled INT DEFAULT 1;",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS text_xp_rate INT DEFAULT 15;",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS voice_xp_rate INT DEFAULT 10;",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS level_up_channel_id BIGINT DEFAULT 0;",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS automod_enabled INT DEFAULT 1;",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS automod_badwords TEXT DEFAULT '';",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS anti_links INT DEFAULT 0;",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS anti_invites INT DEFAULT 0;",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS anti_spam INT DEFAULT 0;",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS ticket_support_role_ids TEXT DEFAULT '[]';",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS custom_embeds TEXT DEFAULT '{}';"
             ]
 
             for query in alter_queries:
                 try:
                     await conn.execute(query)
-                except asyncpg.exceptions.DuplicateColumnError:
+                except Exception:
                     pass
 
     async def get_guild_settings(self, guild_id: int):
@@ -149,12 +152,59 @@ class Database:
             if not row:
                 await conn.execute("INSERT INTO guild_settings (guild_id) VALUES ($1)", guild_id)
                 return await self.get_guild_settings(guild_id)
-            return row
+            
+            # تحويل القيم المخزنة كـ JSON إلى Python Objects لاستخدامها بسلاسة
+            res = dict(row)
+            try:
+                if isinstance(res.get('ticket_support_role_ids'), str):
+                    res['ticket_support_role_ids'] = json.loads(res['ticket_support_role_ids'])
+            except:
+                res['ticket_support_role_ids'] = []
+                
+            try:
+                if isinstance(res.get('custom_embeds'), str):
+                    res['custom_embeds'] = json.loads(res['custom_embeds'])
+            except:
+                res['custom_embeds'] = {}
+                
+            return res
 
     async def update_guild_setting(self, guild_id: int, column: str, value):
         await self._ensure_connection()
+        # لو كانت القيم عبارة عن ليست (List) أو ديكشنري، نحولها لـ JSON نصي عشان تخزن بقاعدة البيانات بدون مشاكل
+        if isinstance(value, (list, dict)):
+            value = json.dumps(value)
+            
         async with self.pool.acquire() as conn:
             await conn.execute(f"UPDATE guild_settings SET {column} = $1 WHERE guild_id = $2", value, guild_id)
+
+    async def save_custom_embed(self, guild_id: int, embed_name: str, embed_dict: dict):
+        await self._ensure_connection()
+        st = await self.get_guild_settings(guild_id)
+        # استرجاع الديكشنري الحالي أو إنشاء واحد جديد
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT custom_embeds FROM guild_settings WHERE guild_id = $1", guild_id)
+            embeds = {}
+            if row and row['custom_embeds']:
+                try:
+                    embeds = json.loads(row['custom_embeds'])
+                except:
+                    embeds = {}
+            
+            embeds[embed_name] = embed_dict
+            await conn.execute("UPDATE guild_settings SET custom_embeds = $1 WHERE guild_id = $2", json.dumps(embeds), guild_id)
+
+    async def get_custom_embed(self, guild_id: int, embed_name: str):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT custom_embeds FROM guild_settings WHERE guild_id = $1", guild_id)
+            if row and row['custom_embeds']:
+                try:
+                    embeds = json.loads(row['custom_embeds'])
+                    return embeds.get(embed_name)
+                except:
+                    return None
+            return None
 
     async def add_level_reward(self, guild_id: int, level: int, role_id: int):
         await self._ensure_connection()
@@ -362,7 +412,6 @@ class Database:
                 GROUP BY activity_type
             """, guild_id, user_id, start_time)
             
-        # شملنا كل المفاتيح عشان ما يصير أي Key Error أبداً
         stats = {
             'text_xp': 0, 
             'voice_xp': 0, 
@@ -406,7 +455,7 @@ db = Database()
 def calculate_next_level_xp(level: int) -> int:
     return (level ** 2) * 100
 
-def create_progress_bar(current: int, total: int, length: int = 10) -> status if False else str:
+def create_progress_bar(current: int, total: int, length: int = 10) -> str:
     percentage = min(1.0, max(0.0, current / total))
     filled = int(percentage * length)
     return "■" * filled + "□" * (length - filled)
