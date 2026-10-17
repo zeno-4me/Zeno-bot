@@ -1,6 +1,7 @@
 import os
 import asyncio
 import traceback
+import random
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -42,18 +43,15 @@ class ZenoBot(commands.Bot):
 
         # تسجيل الـ Persistent Views عشان أزرار التذاكر ما تعطّل بعد ريستارت البوت
         try:
-            if os.path.isdir("./cogs"):
-                from cogs.dashboard import OpenTicketView, CloseTicketView
-            else:
-                from dashboard import OpenTicketView, CloseTicketView
-            self.add_view(OpenTicketView())
-            self.add_view(CloseTicketView())
+            from dashboard import CloseTicketView
+            # تسجيل الـ View العام للإغلاق
+            self.add_view(CloseTicketView(0))
         except Exception as e:
             print(f"تعذر تسجيل Views التذاكر: {e}")
 
         # تحميل كل الـ cogs
         cogs_dir = './cogs' if os.path.exists('./cogs') else '.'
-        ignored_files = ['main.py', 'database.py']
+        ignored_files = ['main.py', 'database.py', 'dashboard.py']
         
         for filename in os.listdir(cogs_dir):
             if filename.endswith('.py') and filename.lower() not in ignored_files and not filename.startswith('.'):
@@ -80,6 +78,30 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
             await interaction.response.send_message(msg, ephemeral=True)
     except Exception:
         pass
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot or not message.guild:
+        return
+
+    # معالجة الردود التلقائية العشوائية المتعددة
+    try:
+        responses = await db.get_auto_responses(message.guild.id)
+        if responses:
+            msg_content = message.content.lower()
+            for r in responses:
+                trigger = r['trigger_text']
+                if trigger in msg_content:
+                    raw_responses = r['response_text']
+                    possible_replies = [item.strip() for item in raw_responses.split("|") if item.strip()]
+                    if possible_replies:
+                        chosen_reply = random.choice(possible_replies)
+                        await message.channel.send(chosen_reply)
+                        break
+    except Exception as e:
+        print(f"خطأ في الردود التلقائية: {e}")
+
+    await bot.process_commands(message)
 
 @bot.event
 async def on_ready():
