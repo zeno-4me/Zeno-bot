@@ -202,6 +202,17 @@ class Database:
                     return None
             return None
 
+    async def get_all_custom_embeds(self, guild_id: int):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT custom_embeds FROM guild_settings WHERE guild_id = $1", guild_id)
+            if row and row['custom_embeds']:
+                try:
+                    return json.loads(row['custom_embeds'])
+                except:
+                    return {}
+            return {}
+
     async def add_level_reward(self, guild_id: int, level: int, role_id: int):
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
