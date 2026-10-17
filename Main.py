@@ -44,14 +44,13 @@ class ZenoBot(commands.Bot):
         # تسجيل الـ Persistent Views عشان أزرار التذاكر ما تعطّل بعد ريستارت البوت
         try:
             from dashboard import CloseTicketView
-            # تسجيل الـ View العام للإغلاق
             self.add_view(CloseTicketView(0))
         except Exception as e:
             print(f"تعذر تسجيل Views التذاكر: {e}")
 
-        # تحميل كل الـ cogs
+        # تحميل كل الـ cogs (وتم إزالة dashboard.py من الاستثناءات ليعمل أمر dashboard)
         cogs_dir = './cogs' if os.path.exists('./cogs') else '.'
-        ignored_files = ['main.py', 'database.py', 'dashboard.py']
+        ignored_files = ['main.py', 'database.py']
         
         for filename in os.listdir(cogs_dir):
             if filename.endswith('.py') and filename.lower() not in ignored_files and not filename.startswith('.'):
