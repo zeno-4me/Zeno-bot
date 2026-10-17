@@ -41,14 +41,12 @@ class ZenoBot(commands.Bot):
             except Exception as e:
                 print(f"خطأ أثناء تهيئة قاعدة البيانات: {e}")
 
-        # تسجيل الـ Persistent Views عشان أزرار التذاكر ما تعطّل بعد ريستارت البوت
         try:
             from dashboard import CloseTicketView
             self.add_view(CloseTicketView(0))
         except Exception as e:
             print(f"تعذر تسجيل Views التذاكر: {e}")
 
-        # تحميل كل الـ cogs (وتم إزالة dashboard.py من الاستثناءات ليعمل أمر dashboard)
         cogs_dir = './cogs' if os.path.exists('./cogs') else '.'
         ignored_files = ['main.py', 'database.py']
         
@@ -83,22 +81,21 @@ async def on_message(message: discord.Message):
     if message.author.bot or not message.guild:
         return
 
-    # معالجة الردود التلقائية العشوائية المتعددة
     try:
         responses = await db.get_auto_responses(message.guild.id)
         if responses:
-            msg_content = message.content.lower()
+            msg_content = message.content.strip().lower()
             for r in responses:
-                trigger = r['trigger_text']
-                if trigger in msg_content:
-                    raw_responses = r['response_text']
-                    possible_replies = [item.strip() for item in raw_responses.split("|") if item.strip()]
-                    if possible_replies:
-                        chosen_reply = random.choice(possible_replies)
-                        await message.channel.send(chosen_reply)
-                        break
+                trigger = r['trigger_text'].strip().lower()
+                if trigger == msg_content or trigger in msg_content:
+                    raw_text = r['response_text']
+                    replies_list = [item.strip() for item in raw_text.split("|") if item.strip()]
+                    if replies_list:
+                        chosen = random.choice(replies_list)
+                        await message.channel.send(chosen)
+                        return
     except Exception as e:
-        print(f"خطأ في الردود التلقائية: {e}")
+        print(f"خطأ في الرد التلقائي: {e}")
 
     await bot.process_commands(message)
 
