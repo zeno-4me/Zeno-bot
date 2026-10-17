@@ -67,7 +67,7 @@ class ChangeXPRatesModal(discord.ui.Modal, title="تعديل معدل الـ XP"
         except ValueError:
             await interaction.response.send_message("❌ يرجى كتابة أرقام صحيحة!", ephemeral=True)
 
-# Embed Builder Modals (دمجنا الأساسيات مع الفوتر)
+# Embed Builder Modals
 class EmbedBasicsAndFooterModal(discord.ui.Modal, title="تعديل الأساسيات والفوتر والمؤلف"):
     e_title = discord.ui.TextInput(label="العنوان", required=False, placeholder="عنوان الإمبد...")
     e_desc = discord.ui.TextInput(label="الوصف", style=discord.TextStyle.paragraph, required=True, placeholder="اكتب محتوى الإمبد هنا...")
@@ -145,22 +145,52 @@ class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمب
         await interaction.followup.send(f"✅ تم حفظ الإمبد باسم `{name}` وإرساله بنجاح إلى القناة!", ephemeral=True)
 
 class AdvancedEmbedBuilderView(discord.ui.View):
-    def __init__(self, author: discord.Member, embed_name: str = "custom", default_embed: discord.Embed = None, has_ticket: bool = False):
+    def __init__(self, author: discord.Member, embed_name: str = "custom", default_embed: discord.Embed = None, has_ticket: bool = False, is_internal_ticket: bool = False):
         super().__init__(timeout=300)
         self.author = author
         self.embed_name = embed_name
         self.has_ticket_button = has_ticket
+        self.is_internal_ticket = is_internal_ticket
         self.current_embed = default_embed or discord.Embed(
             title="📌 صانع الإمبدز",
             description="مرحباً بك في قسم الإمبدز! تعديل الأساسيات يشمل العنوان، الوصف، اللون والفوتر.", 
             color=discord.Color.blurple()
         )
+        
+        if self.is_internal_ticket:
+            self.clear_items()
+            self.add_item(discord.ui.Button(label="تعديل الأساسيات والفوتر", style=discord.ButtonStyle.primary, row=0, custom_id="int_basics"))
+            self.add_item(discord.ui.Button(label="تعديل الصور", style=discord.ButtonStyle.secondary, row=0, custom_id="int_images"))
+            self.add_item(discord.ui.Button(label="💾 حفظ تعديل التذكرة", style=discord.ButtonStyle.success, row=1, custom_id="int_save"))
+            
+            for child in self.children:
+                if child.custom_id == "int_basics":
+                    child.callback = self.edit_basics_callback
+                elif child.custom_id == "int_images":
+                    child.callback = self.edit_images_callback
+                elif child.custom_id == "int_save":
+                    child.callback = self.save_internal_ticket_callback
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user != self.author:
             await interaction.response.send_message("❌ هذه القائمة ليست لك!", ephemeral=True)
             return False
         return True
+
+    async def edit_basics_callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(EmbedBasicsAndFooterModal(self.current_embed, self))
+
+    async def edit_images_callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(EmbedImagesModal(self.current_embed, self))
+
+    async def save_internal_ticket_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        data = {
+            "embed": self.current_embed.to_dict(),
+            "has_ticket": False
+        }
+        await db.save_custom_embed(interaction.guild_id, "ticket_internal", data)
+        await interaction.followup.send("✅ تم حفظ تعديل الإمبد الداخلي للتذكرة بنجاح!", ephemeral=True)
 
     @discord.ui.button(label="تعديل الأساسيات والفوتر", style=discord.ButtonStyle.primary, row=0)
     async def edit_basics(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -173,16 +203,8 @@ class AdvancedEmbedBuilderView(discord.ui.View):
     @discord.ui.button(label="🎟️", style=discord.ButtonStyle.success, row=1)
     async def toggle_ticket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.has_ticket_button = not self.has_ticket_button
-        if self.has_ticket_button:
-            # عند تفعيل التذكرة تفتح له قائمة إعدادات التذاكر لتحديد الفئة والرتب
-            embed = discord.Embed(
-                title="🎟️ إعدادات التذكرة للإمبد",
-                description="قم بتحديد إعدادات التذكرة الخاصة بهذا الإمبد (الكاتيجوري، اللوق، والرتب):",
-                color=discord.Color.blue()
-            )
-            await interaction.response.send_message(embed=embed, view=TicketAndEmbedSettingsView(parent_view=self), ephemeral=True)
-        else:
-            await interaction.response.send_message("تم تعطيل زر التذكرة لهذا الإمبد! ❌", ephemeral=True)
+        state_text = "مفعل ✅" if self.has_ticket_button else "معطل ❌"
+        await interaction.response.send_message(f"تم تغيير حالة زر التذكرة في هذا الإمبد ليصبح: {state_text}", ephemeral=True)
 
     @discord.ui.button(label="🎭", style=discord.ButtonStyle.secondary, row=1)
     async def role_button_placeholder(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -191,6 +213,38 @@ class AdvancedEmbedBuilderView(discord.ui.View):
     @discord.ui.button(label="إرسال الإمبد", style=discord.ButtonStyle.danger, row=1)
     async def prompt_send_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EmbedNameModal(self))
+
+# قائمة اختيار الإمبدز القديمة لتعديلها
+class OldEmbedSelect(discord.ui.Select):
+    def __init__(self, embeds_dict: dict):
+        options = []
+        for name in embeds_dict.keys():
+            options.append(discord.SelectOption(label=name, description=f"تعديل الإمبد المحفوظ: {name}", emoji="📁"))
+        
+        if not options:
+            options.append(discord.SelectOption(label="لا توجد إمبدز محفوظة", description="قم بحفظ إمبد جديد أولاً", emoji="❌", value="none"))
+            
+        super().__init__(placeholder="اختر الإمبد القديم للتعديل...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "none":
+            await interaction.response.send_message("❌ لا توجد إمبدز محفوظة حالياً!", ephemeral=True)
+            return
+
+        selected_name = self.values[0]
+        all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
+        embed_data = all_embeds.get(selected_name, {})
+        
+        default_emb = discord.Embed.from_dict(embed_data.get("embed", {})) if embed_data.get("embed") else discord.Embed(title=selected_name, description="محتوى الإمبد...")
+        has_btn = embed_data.get("has_ticket", False)
+
+        view = AdvancedEmbedBuilderView(author=interaction.user, embed_name=selected_name, default_embed=default_emb, has_ticket=has_btn)
+        await interaction.response.send_message(embed=view.current_embed, view=view, ephemeral=True)
+
+class OldEmbedsView(discord.ui.View):
+    def __init__(self, embeds_dict: dict):
+        super().__init__(timeout=None)
+        self.add_item(OldEmbedSelect(embeds_dict))
 
 # UI Select Helpers
 class ChannelSelectMenu(discord.ui.ChannelSelect):
@@ -270,15 +324,37 @@ class XPSettingsView(discord.ui.View):
         embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=MainDashboardView())
 
-class TicketAndEmbedSettingsView(discord.ui.View):
-    def __init__(self, parent_view=None):
+class EmbedsSectionView(discord.ui.View):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.parent_view = parent_view
         self.add_item(CategorySelectMenu("ticket_category_id", "📂 فئة فتح التذاكر (Category)..."))
         self.add_item(ChannelSelectMenu("ticket_log_channel_id", "📜 قناة لوق التذاكر (Ticket Logs)..."))
         self.add_item(MultiRoleSelectMenu("🛡️ تحديد رتب المساعدة (الدعم الفني)..."))
 
-    @discord.ui.button(label="تعديل الإمبد الداخلي للتذكرة", style=discord.ButtonStyle.primary, row=3)
+    @discord.ui.button(label="صانع الإمبدز (الرئيسي)", style=discord.ButtonStyle.primary, row=3)
+    async def open_embed_builder(self, interaction: discord.Interaction, button: discord.ui.Button):
+        saved_data = await db.get_custom_embed(interaction.guild_id, "main_embed")
+        if saved_data:
+            default_emb = discord.Embed.from_dict(saved_data.get("embed", {}))
+            has_btn = saved_data.get("has_ticket", False)
+        else:
+            default_emb = discord.Embed(
+                title="📌 صانع الإمبدز", 
+                description="صمم إمبدك الخاص مع إمكانية إضافة زر التذكرة وتعديل إعداداتها بالكامل.", 
+                color=discord.Color.green()
+            )
+            has_btn = False
+
+        view = AdvancedEmbedBuilderView(author=interaction.user, embed_name="main_embed", default_embed=default_emb, has_ticket=has_btn, is_internal_ticket=False)
+        await interaction.response.send_message(embed=view.current_embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="تعديل الإمبدز القديمة والمحفوظة", style=discord.ButtonStyle.success, row=3)
+    async def edit_old_embeds(self, interaction: discord.Interaction, button: discord.ui.Button):
+        all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
+        view = OldEmbedsView(all_embeds)
+        await interaction.response.send_message("📁 اختر الإمبد المحفوظ الذي تريد تعديله:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="تعديل التذكرة (الإمبد الداخلي)", style=discord.ButtonStyle.secondary, row=3)
     async def edit_internal_ticket_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
         saved_data = await db.get_custom_embed(interaction.guild_id, "ticket_internal")
         default_emb = discord.Embed.from_dict(saved_data.get("embed", {})) if saved_data else discord.Embed(
@@ -286,8 +362,13 @@ class TicketAndEmbedSettingsView(discord.ui.View):
             description="مرحباً بك! تفضل بكتابة استفسارك وسيتم الرد عليك بأسرع وقت.", 
             color=discord.Color.blue()
         )
-        view = AdvancedEmbedBuilderView(author=interaction.user, embed_name="ticket_internal", default_embed=default_emb)
+        view = AdvancedEmbedBuilderView(author=interaction.user, embed_name="ticket_internal", default_embed=default_emb, is_internal_ticket=True)
         await interaction.response.send_message(embed=view.current_embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="الرجوع للصفحة الرئيسية", style=discord.ButtonStyle.secondary, row=4)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
+        await interaction.response.edit_message(embed=embed, view=MainDashboardView())
 
 class OpenTicketView(discord.ui.View):
     def __init__(self):
@@ -369,21 +450,12 @@ class DashboardSelectMenu(discord.ui.Select):
         st = await db.get_guild_settings(interaction.guild_id)
 
         if sel == "embeds":
-            # يفتح صانع الإمبدز الرئيسي فوراً مع الأزرار المطلوبة تحت بدلاً من الصفحة الفرعية
-            saved_data = await db.get_custom_embed(interaction.guild_id, "main_embed")
-            if saved_data:
-                default_emb = discord.Embed.from_dict(saved_data.get("embed", {}))
-                has_btn = saved_data.get("has_ticket", False)
-            else:
-                default_emb = discord.Embed(
-                    title="📌 صانع الإمبدز", 
-                    description="صمم إمبدك الخاص مع إمكانية إضافة زر التذكرة وتعديل إعداداتها بالكامل.", 
-                    color=discord.Color.blurple()
-                )
-                has_btn = False
-
-            view = AdvancedEmbedBuilderView(author=interaction.user, embed_name="main_embed", default_embed=default_emb, has_ticket=has_btn)
-            await interaction.response.edit_message(embed=view.current_embed, view=view)
+            embed = discord.Embed(
+                title="📌 قسم الإيمبدز",
+                description="إدارة وصنع الإمبدز مع خيارات إضافية لتفعيل زر التذاكر وتعديل إعداداتها.",
+                color=discord.Color.blurple()
+            )
+            await interaction.response.edit_message(embed=embed, view=EmbedsSectionView())
 
         elif sel == "general":
             embed = discord.Embed(title="👋 إعدادات الترحيب والمغادرة والسجلات", color=discord.Color.green())
