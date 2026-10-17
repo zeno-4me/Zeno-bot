@@ -29,7 +29,6 @@ class AddAutoResponseModal(discord.ui.Modal, title="إضافة رد تلقائي
     trigger = discord.ui.TextInput(label="جملة المستخدم (الكلمة المفتاحية)", placeholder="مثال: السلام عليكم", required=True)
     response = discord.ui.TextInput(label="الردود التلقائية (افصل بينها بعلامة | )", style=discord.TextStyle.paragraph, placeholder="وعليكم السلام | هلا والله | أهلاً وسهلاً بك!", required=True)
     async def on_submit(self, interaction: discord.Interaction):
-        # حفظ الردود مفصولة بعلامة | لدعم الاختيار العشوائي
         responses_list = [r.strip() for r in self.response.value.split("|") if r.strip()]
         formatted_resp = " | ".join(responses_list)
         await db.add_auto_response(interaction.guild_id, self.trigger.value, formatted_resp)
@@ -321,7 +320,7 @@ class SingleTicketOptionSettingsView(discord.ui.View):
         view = AdvancedEmbedBuilderView(author=interaction.user, embed_name=f"internal_{self.option_key}", default_embed=def_emb, is_internal_ticket=True)
         await interaction.response.send_message(embed=view.current_embed, view=view, ephemeral=True)
 
-# UI Select Helpers & Dynamic Controls
+# UI Select Helpers
 class ChannelSelectMenu(discord.ui.ChannelSelect):
     def __init__(self, setting_key: str, placeholder_text: str, channel_types=None):
         self.setting_key = setting_key
@@ -329,6 +328,13 @@ class ChannelSelectMenu(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction):
         channel = self.values[0]
+        if self.setting_key.startswith("opt_cat_"):
+            opt_key = self.setting_key.replace("opt_cat_", "")
+            view = interaction.client.get_cog("Dashboard") # update inside view context
+            # update in active builder view if accessible or database
+        elif self.setting_key.startswith("opt_log_"):
+            opt_key = self.setting_key.replace("opt_log_", "")
+        
         await db.update_guild_setting(interaction.guild_id, self.setting_key, channel.id)
         await interaction.response.send_message(f"✅ تم تحديد القناة: {channel.mention}", ephemeral=True)
 
@@ -339,6 +345,9 @@ class CategorySelectMenu(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction):
         category = self.values[0]
+        if self.setting_key.startswith("opt_cat_"):
+            opt_key = self.setting_key.replace("opt_cat_", "")
+            # سيتم حفظها في خيارات الإمبد الفعالة
         await db.update_guild_setting(interaction.guild_id, self.setting_key, category.id)
         await interaction.response.send_message(f"✅ تم تحديد الفئة (Category): **{category.name}**", ephemeral=True)
 
