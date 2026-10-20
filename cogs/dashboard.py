@@ -113,7 +113,6 @@ class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمب
     def __init__(self, view):
         super().__init__()
         self.builder_view = view
-        # إذا كنا نعدل إمبد محفوظ مسبقاً، نثبت اسمه الافتراضي عشان ما يتسجل كإمبد جديد بالغلط
         if self.builder_view.embed_name and self.builder_view.embed_name != "custom":
             self.embed_name_input.default = self.builder_view.embed_name
 
@@ -379,7 +378,6 @@ class OldEmbedSelect(discord.ui.Select):
         all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
         embed_data = all_embeds.get(selected_name, {})
         
-        # تم تصحيح هذه الجزئية لتجلب محتوى الإمبد القديم بدلاً من إمبد فارغ
         default_emb = discord.Embed.from_dict(embed_data.get("embed", {})) if embed_data.get("embed") else discord.Embed(title=selected_name, description="محتوى الإمبد...")
         saved_url = embed_data.get("message_url", None)
 
@@ -489,7 +487,7 @@ class MainDashboardView(discord.ui.View):
         self.add_item(DashboardSelectMenu())
 
 class Dashboard(commands.Cog):
-    def __init__(belf, bot):
+    def __init__(self, bot):
         self.bot = bot
 
     @app_commands.command(name="dashboard", description="فتح لوحة تحكم السيرفر الشاملة لأغلب ضروريات البوت")
