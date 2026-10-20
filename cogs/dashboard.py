@@ -1,4 +1,4 @@
-import asyncio
+Import asyncio
 from datetime import datetime
 import random
 import re
@@ -42,22 +42,6 @@ class AddAutoResponseModal(discord.ui.Modal, title="إضافة رد تلقائي
         formatted_resp = " | ".join(responses_list)
         await db.add_auto_response(interaction.guild_id, self.trigger.value, formatted_resp)
         await interaction.response.send_message(f"✅ تمت إضافة الردود التلقائية للكلمة `{self.trigger.value}` بعدد `{len(responses_list)}` ردود عشوائية!", ephemeral=True)
-
-class AddButtonRoleModal(discord.ui.Modal, title="إضافة رتبة زر تفاعلي"):
-    label = discord.ui.TextInput(label="اسم الزر", placeholder="مثال: VIP", required=True)
-    role_id_input = discord.ui.TextInput(label="آيدي الرتبة (Role ID)", placeholder="123456789...", required=True)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            r_id = int(self.role_id_input.value)
-            role = interaction.guild.get_role(r_id)
-            if not role:
-                await interaction.response.send_message("❌ الرتبة غير موجودة بهذا الآيدي!", ephemeral=True)
-                return
-            await db.add_button_role(interaction.guild_id, self.label.value, r_id)
-            await interaction.response.send_message(f"✅ تم ربط الزر `{self.label.value}` بالرتبة {role.mention}!", ephemeral=True)
-        except ValueError:
-            await interaction.response.send_message("❌ يرجى إدخال آيدي صحيح!", ephemeral=True)
 
 class ChangeXPRatesModal(discord.ui.Modal, title="تعديل معدل الـ XP"):
     text_rate = discord.ui.TextInput(label="خبرة الكتابة (لكل رسالة)", default="15", max_length=4)
@@ -124,7 +108,7 @@ class EmbedImagesModal(discord.ui.Modal, title="تعديل الصور والرو
         await interaction.response.edit_message(embed=self.embed, view=self.embed_view)
 
 class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمبد"):
-    embed_name_input = discord.ui.TextInput(label="اسم الإمبد (مطلوبة للحفظ)", placeholder="مثال: main_embed", required=True)
+    embed_name_input = discord.ui.TextInput(label="اسم الإمبد (مطلوبة للحفظ)", placeholder="مثال: rules_embed", required=True)
 
     def __init__(self, view):
         super().__init__()
@@ -135,7 +119,7 @@ class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمب
         
         name = self.embed_name_input.value.strip()
         if not name:
-            await interaction.followup.send("❌ يجب إدخال اسم صحيح للإمبد لكي يتم حفظ الإرسال!", ephemeral=True)
+            await interaction.followup.send("❌ يجب إدخال اسم صحيح للإمبد لكي يتم حفظه!", ephemeral=True)
             return
 
         self.builder_view.embed_name = name
@@ -148,7 +132,7 @@ class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمب
         await db.save_custom_embed(interaction.guild_id, name, data)
         await interaction.followup.send(f"✅ تم حفظ الإمبد باسم `{name}` وإرساله بنجاح!", ephemeral=True)
 
-class ApplyEmbedEditModal(discord.ui.Modal, title="التعديل على ايمبد مرسل"):
+class ApplyEmbedEditModal(discord.ui.Modal, title="تطبيق التعديل على الرسالة الأصلية"):
     url_input = discord.ui.TextInput(label="رابط الرسالة الأصلية (Message URL)", placeholder="https://discord.com/channels/...", required=False)
 
     def __init__(self, builder_view):
@@ -179,7 +163,6 @@ class ApplyEmbedEditModal(discord.ui.Modal, title="التعديل على ايم�
             target_msg = await channel.fetch_message(message_id)
             await target_msg.edit(embed=self.builder_view.current_embed)
             
-            # تحديث الداتا المحفوظة
             data = {
                 "embed": self.builder_view.current_embed.to_dict(),
                 "message_url": target_url
@@ -198,7 +181,7 @@ class AdvancedEmbedBuilderView(discord.ui.View):
         self.saved_message_url = saved_message_url
         self.current_embed = default_embed or discord.Embed(
             title="📌 صانع الإمبدز",
-            description="مرحباً بك في قسم الإمبدز! تعديل الأساسيات يشمل العنوان، الوصف، اللون والفوتر.", 
+            description="مرحباً بك في صانع الإمبدز! عدل الأساسيات، الصور، ثم احفظه أو أرسله.", 
             color=discord.Color.blurple()
         )
 
@@ -216,11 +199,11 @@ class AdvancedEmbedBuilderView(discord.ui.View):
     async def edit_images(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EmbedImagesModal(self.current_embed, self))
 
-    @discord.ui.button(label="التعديل على ايمبد مرسل", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="🔄 تطبيق التعديل على الرسالة الأصلية", style=discord.ButtonStyle.primary, row=1)
     async def apply_edit_to_original(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(ApplyEmbedEditModal(self))
 
-    @discord.ui.button(label="ارسال الايمبد", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="إرسال كـ إمبد جديد وحفظه", style=discord.ButtonStyle.success, row=1)
     async def prompt_send_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EmbedNameModal(self))
 
@@ -245,30 +228,6 @@ class RoleSelectMenu(discord.ui.RoleSelect):
         await db.update_guild_setting(interaction.guild_id, self.setting_key, role.id)
         await interaction.response.send_message(f"✅ تم تحديد الرتبة: {role.mention}", ephemeral=True)
 
-class DynamicRoleButton(discord.ui.Button):
-    def __init__(self, label: str, role_id: int):
-        super().__init__(label=label, style=discord.ButtonStyle.primary, custom_id=f"btn_role_{role_id}")
-        self.role_id = role_id
-
-    async def callback(self, interaction: discord.Interaction):
-        role = interaction.guild.get_role(self.role_id)
-        if not role:
-            await interaction.response.send_message("❌ هذه الرتبة لم تعد موجودة في السيرفر!", ephemeral=True)
-            return
-
-        if role in interaction.user.roles:
-            await interaction.user.remove_roles(role)
-            await interaction.response.send_message(f"➖ تم إزالة الرتبة {role.mention} بنجاح!", ephemeral=True)
-        else:
-            await interaction.user.add_roles(role)
-            await interaction.response.send_message(f"➕ تم إعطاؤك الرتبة {role.mention} بنجاح!", ephemeral=True)
-
-class ButtonRolesDeployView(discord.ui.View):
-    def __init__(self, b_roles: list):
-        super().__init__(timeout=None)
-        for label, r_id in b_roles:
-            self.add_item(DynamicRoleButton(label, r_id))
-
 class GeneralSettingsView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -285,7 +244,7 @@ class GeneralSettingsView(discord.ui.View):
     async def edit_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditLeaveModal())
 
-    @discord.ui.button(label="الرجوع للصفحة للرئيسية", style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label="الرجوع للصفحة الرئيسية", style=discord.ButtonStyle.secondary, row=4)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
         await interaction.response.edit_message(embed=embed, view=MainDashboardView())
@@ -332,21 +291,6 @@ class AutoResponseView(discord.ui.View):
     async def add_response(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AddAutoResponseModal())
 
-    @discord.ui.button(label="➕ إضافة زر رتبة تفاعلية", style=discord.ButtonStyle.secondary, row=1)
-    async def add_btn_role(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AddButtonRoleModal())
-
-    @discord.ui.button(label="📢 نشر بنل رتب الأزرار هنا", style=discord.ButtonStyle.secondary, row=1)
-    async def deploy_btn_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
-        b_roles = await db.get_button_roles(interaction.guild_id)
-        view = ButtonRolesDeployView(b_roles)
-        if len(view.children) == 0:
-            await interaction.response.send_message("❌ لم تقم بإضافة أي أزرار رتب بعد! اضغط على إضافة زر رتبة تفاعلية أولاً.", ephemeral=True)
-            return
-        embed = discord.Embed(title="🎭 اختيار الرتب التفاعلية", description="اضغط على الأزرار أدناه للحصول على الرتبة أو إزالتها!", color=discord.Color.purple())
-        await interaction.channel.send(embed=embed, view=view)
-        await interaction.response.send_message("✅ تم نشر بنل الرتب التفاعلية!", ephemeral=True)
-
     @discord.ui.button(label="الرجوع للصفحة الرئيسية", style=discord.ButtonStyle.secondary, row=1)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
@@ -379,7 +323,7 @@ class EmbedsSectionView(discord.ui.View):
         else:
             default_emb = discord.Embed(
                 title="📌 صانع الإمبدز", 
-                description="صمم إمبدك الخاص بكل سهولة وسرعة.", 
+                description="صمم إمبدك الخاص بكل إتقان.", 
                 color=discord.Color.green()
             )
             saved_url = None
@@ -392,17 +336,11 @@ class EmbedsSectionView(discord.ui.View):
         )
         await interaction.response.send_message(embed=view.current_embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="تعديل الإمبدز القديمة والمحفوظة", style=discord.ButtonStyle.success, row=0)
+    @discord.ui.button(label="تعديل الإمبدز المحفوظة", style=discord.ButtonStyle.success, row=0)
     async def edit_old_embeds(self, interaction: discord.Interaction, button: discord.ui.Button):
         all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
         view = OldEmbedsView(all_embeds)
         await interaction.response.send_message("📁 اختر الإمبد المحفوظ الذي تريد تعديله:", view=view, ephemeral=True)
-
-    @discord.ui.button(label="🗑️ حذف إمبد محفوظ", style=discord.ButtonStyle.danger, row=0)
-    async def delete_old_embeds(self, interaction: discord.Interaction, button: discord.ui.Button):
-        all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
-        view = DeleteEmbedsView(all_embeds)
-        await interaction.response.send_message("🗑️ اختر الإمبد المحفوظ الذي تريد حذفه:", view=view, ephemeral=True)
 
     @discord.ui.button(label="الرجوع للصفحة الرئيسية", style=discord.ButtonStyle.secondary, row=1)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -418,7 +356,7 @@ class OldEmbedSelect(discord.ui.Select):
         if not options:
             options.append(discord.SelectOption(label="لا توجد إمبدز محفوظة", description="قم بحفظ إمبد جديد أولاً", emoji="❌", value="none"))
             
-        super().__init__(placeholder="اختر الإمبد القديم للتعديل...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="اختر الإمبد المحفوظ للتعديل...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         if self.values[0] == "none":
@@ -445,39 +383,14 @@ class OldEmbedsView(discord.ui.View):
         super().__init__(timeout=None)
         self.add_item(OldEmbedSelect(embeds_dict))
 
-class DeleteEmbedSelect(discord.ui.Select):
-    def __init__(self, embeds_dict: dict):
-        options = []
-        for name in embeds_dict.keys():
-            options.append(discord.SelectOption(label=name, description=f"حذف الإمبد المحفوظ: {name}", emoji="🗑️"))
-        
-        if not options:
-            options.append(discord.SelectOption(label="لا توجد إمبدز محفوظة", description="لا يوجد شيء لحذفه", emoji="❌", value="none"))
-            
-        super().__init__(placeholder="اختر الإمبد المراد حذفه...", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "none":
-            await interaction.response.send_message("❌ لا توجد إمبدز محفوظة لحذفها!", ephemeral=True)
-            return
-
-        selected_name = self.values[0]
-        await db.delete_custom_embed(interaction.guild_id, selected_name)
-        await interaction.response.send_message(f"🗑️ تم حذف الإمبد المحفوظ `{selected_name}` بنجاح!", ephemeral=True)
-
-class DeleteEmbedsView(discord.ui.View):
-    def __init__(self, embeds_dict: dict):
-        super().__init__(timeout=None)
-        self.add_item(DeleteEmbedSelect(embeds_dict))
-
 class DashboardSelectMenu(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="📌 قسم الإيمبودز", description="إدارة وصنع الإمبدز وتعديلها", emoji="📌", value="embeds"),
+            discord.SelectOption(label="📌 قسم الإيمبدز", description="إدارة وصنع الإمبدز الاحترافية وتعديلها", emoji="📌", value="embeds"),
             discord.SelectOption(label="👋 الترحيب والمغادرة والسجلات", description="إعداد رومات الترحيب والمغادرة والرتب التلقائية", emoji="👋", value="general"),
             discord.SelectOption(label="🛡️ الحماية والتعديل الآلي", description="منع الروابط والدعوات والكلمات الممنوعة", emoji="🛡️", value="automod"),
-            discord.SelectOption(label="⭐ نظام اللفل والخبرة والمكافآت", description="معدلات XP واللفل الصوتي والكتابي", emoji="⭐", value="xp"),
-            discord.SelectOption(label="🤖 الردود التلقائية ورتب الأزرار", description="إدارة الردود الآلية وأزرار إعطاء الرتب", emoji="🤖", value="auto_responses"),
+            discord.SelectOption(label="⭐ نظام اللفل والخبرة والمكافآت", description="معدلات XP والفلل الصوتي والكتابي", emoji="⭐", value="xp"),
+            discord.SelectOption(label="🤖 الردود التلقائية", description="إدارة الردود الآلية المتعددة والعشوائية", emoji="🤖", value="auto_responses"),
         ]
         super().__init__(placeholder="اختر القسم المراد التحكم به بالكامل...", min_values=1, max_values=1, options=options)
 
@@ -487,8 +400,8 @@ class DashboardSelectMenu(discord.ui.Select):
 
         if sel == "embeds":
             embed = discord.Embed(
-                title="📌 قسم الإيمبودز",
-                description="إدارة وصنع الإمبدز وتعديلها وحفظها وحذفها بسهولة.",
+                title="📌 قسم الإيمبدز",
+                description="إدارة وصنع الإمبدز بكل احترافية.",
                 color=discord.Color.blurple()
             )
             await interaction.response.edit_message(embed=embed, view=EmbedsSectionView())
@@ -514,7 +427,7 @@ class DashboardSelectMenu(discord.ui.Select):
             await interaction.response.edit_message(embed=embed, view=AutoModSettingsView())
 
         elif sel == "auto_responses":
-            embed = discord.Embed(title="🤖 الردود التلقائية ورتب الأزرار", color=discord.Color.purple())
+            embed = discord.Embed(title="🤖 الردود التلقائية", color=discord.Color.purple())
             responses = await db.get_auto_responses(interaction.guild_id)
             
             resp_str = "\n".join([f"• `{r['trigger_text']}` ➔ {r['response_text']}" for r in responses[:10]]) if responses else "لا توجد ردود تلقائية مضافة"
@@ -539,12 +452,12 @@ class Dashboard(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="dashboard", description="فتح لوحة تحكم السيرفر الشاملة لاغلب ضروريات البوت")
+    @app_commands.command(name="dashboard", description="فتح لوحة تحكم السيرفر الشاملة لأغلب ضروريات البوت")
     @app_commands.checks.has_permissions(administrator=True)
     async def dashboard(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="⚙️ لوحة تحكم السيرفر الشاملة",
-            description="اختر القسم الذي تريد تعديله من القائمة المستطيلة للتحكم الكامل بسيرفرك بدون مواقع خارجية!",
+            description="اختر القسم الذي تريد تعديله من القائمة المستطيلة للتحكم الكامل بسيرفرك!",
             color=discord.Color.blurple()
         )
         view = MainDashboardView()
