@@ -378,7 +378,6 @@ class OldEmbedSelect(discord.ui.Select):
         all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
         embed_data = all_embeds.get(selected_name, {})
         
-        # التصحيح الأكيد هنا: التعامل سواء كانت الداتا مخزنة كمباشر أو داخل مفتاح "embed"
         if isinstance(embed_data, dict) and "embed" in embed_data:
             raw_embed_dict = embed_data.get("embed")
             saved_url = embed_data.get("message_url", None)
@@ -398,7 +397,7 @@ class OldEmbedSelect(discord.ui.Select):
             saved_message_url=saved_url
         )
         
-        # تعديل الرسالة الحالية التابعة للقائمة المنسدلة وعرض الإمبد الحقيقي بدلاً من إرسال رسالة جديدة فارغة
+        # التعديل هنا لضمان إرسال الإمبد المحفوظ الحقيقي (`default_emb`) بدل الإمبد الافتراضي الفارغ
         await interaction.response.edit_message(content=f"📁 تم تحميل الإمبد: `{selected_name}`", embed=view.current_embed, view=view)
 
 class OldEmbedsView(discord.ui.View):
