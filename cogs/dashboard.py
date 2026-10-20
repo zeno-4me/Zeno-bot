@@ -87,7 +87,6 @@ class EmbedBasicsAndFooterModal(discord.ui.Modal, title="تعديل الأساس
         if self.e_footer.value: self.embed.set_footer(text=self.e_footer.value)
         else: self.embed.remove_footer()
 
-        # تحديث الرسالة المعروضة مباشرة بالإمبد الجديد المعدل
         await interaction.response.edit_message(embed=self.embed, view=self.embed_view)
 
 class EmbedImagesModal(discord.ui.Modal, title="تعديل الصور والروابط"):
@@ -337,7 +336,6 @@ class EmbedsSectionView(discord.ui.View):
             default_embed=default_emb,
             saved_message_url=saved_url
         )
-        # إرسال الرسالة مع الإمبد وصانع الأزرار مباشرة بدلاً من إرسال إمبد افتراضي فارغ
         await interaction.response.send_message(embed=view.current_embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="تعديل الإمبدز المحفوظة", style=discord.ButtonStyle.success, row=0)
@@ -380,14 +378,18 @@ class OldEmbedSelect(discord.ui.Select):
         all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
         embed_data = all_embeds.get(selected_name, {})
         
-        # تصحيح جلب محتوى الإمبد المحفوظ الحقيقي بدلاً من افتراضي فارغ
-        raw_embed_dict = embed_data.get("embed")
+        # التصحيح الأكيد هنا: التعامل سواء كانت الداتا مخزنة كمباشر أو داخل مفتاح "embed"
+        if isinstance(embed_data, dict) and "embed" in embed_data:
+            raw_embed_dict = embed_data.get("embed")
+            saved_url = embed_data.get("message_url", None)
+        else:
+            raw_embed_dict = embed_data
+            saved_url = None
+
         if raw_embed_dict:
             default_emb = discord.Embed.from_dict(raw_embed_dict)
         else:
             default_emb = discord.Embed(title=selected_name, description="محتوى الإمبد...")
-            
-        saved_url = embed_data.get("message_url", None)
 
         view = AdvancedEmbedBuilderView(
             author=interaction.user, 
@@ -395,8 +397,9 @@ class OldEmbedSelect(discord.ui.Select):
             default_embed=default_emb,
             saved_message_url=saved_url
         )
-        # إرسال الإمبد الحقيقي المعدل مع الأزرار
-        await interaction.response.send_message(embed=view.current_embed, view=view, ephemeral=True)
+        
+        # تعديل الرسالة الحالية التابعة للقائمة المنسدلة وعرض الإمبد الحقيقي بدلاً من إرسال رسالة جديدة فارغة
+        await interaction.response.edit_message(content=f"📁 تم تحميل الإمبد: `{selected_name}`", embed=view.current_embed, view=view)
 
 class OldEmbedsView(discord.ui.View):
     def __init__(self, embeds_dict: dict):
