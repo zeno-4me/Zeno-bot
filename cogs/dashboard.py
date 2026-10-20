@@ -108,12 +108,14 @@ class EmbedImagesModal(discord.ui.Modal, title="تعديل الصور والرو
         await interaction.response.edit_message(embed=self.embed, view=self.embed_view)
 
 class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمبد"):
-    embed_name_input = discord.ui.TextInput(label="اسم الإمبد (مطلوبة للحفظ)", placeholder="مثال: rules_embed", required=True)
+    # تم إزالة القيمة الافتراضية الـ main_embed وجعل الحقل فارغاً مع بليس هولدر لتكتب الاسم بحرية
+    embed_name_input = discord.ui.TextInput(label="اسم الإمبد (مطلوبة للحفظ)", placeholder="اكتب اسم الإمبد هنا...", required=True)
 
     def __init__(self, view):
         super().__init__()
         self.builder_view = view
-        if self.builder_view.embed_name:
+        # إذا كان الإمبد الحالي له اسم قديم مخصص (ليس الافتراضي)، نضعه، وإلا نتركه فارغاً تماماً
+        if self.builder_view.embed_name and self.builder_view.embed_name != "main_embed" and self.builder_view.embed_name != "custom":
             self.embed_name_input.default = self.builder_view.embed_name
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -181,7 +183,6 @@ class AdvancedEmbedBuilderView(discord.ui.View):
         self.author = author
         self.embed_name = embed_name
         self.saved_message_url = saved_message_url
-        # التصحيح الهام هنا: إذا تم إرسال default_emb سيتم اعتماده كإمبد رئيسي للواجهة فوراً بدلاً من إمبد الواجهة الافتراضي
         self.current_embed = default_embed or discord.Embed(
             title="📌 صانع الإمبدز",
             description="مرحباً بك في صانع الإمبدز! عدل الأساسيات، الصور، ثم احفظه أو عدل رسالة مرسلة.", 
@@ -398,7 +399,6 @@ class OldEmbedSelect(discord.ui.Select):
             saved_message_url=saved_url
         )
         
-        # التعديل هنا: استخدام embed=view.current_embed لضمان عرض الإمبد الحقيقي المختار وليس الإمبد الافتراضي للواجهة
         await interaction.response.edit_message(content=f"📁 تم تحميل الإمبد: `{selected_name}`", embed=view.current_embed, view=view)
 
 class OldEmbedsView(discord.ui.View):
