@@ -113,7 +113,6 @@ class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمب
     def __init__(self, view):
         super().__init__()
         self.builder_view = view
-        # تعبئة اسم الإمبد الحالي تلقائياً في المودال لضمان عدم حدوث تداخل
         if self.builder_view.embed_name:
             self.embed_name_input.default = self.builder_view.embed_name
 
@@ -182,6 +181,7 @@ class AdvancedEmbedBuilderView(discord.ui.View):
         self.author = author
         self.embed_name = embed_name
         self.saved_message_url = saved_message_url
+        # التصحيح الهام هنا: إذا تم إرسال default_emb سيتم اعتماده كإمبد رئيسي للواجهة فوراً بدلاً من إمبد الواجهة الافتراضي
         self.current_embed = default_embed or discord.Embed(
             title="📌 صانع الإمبدز",
             description="مرحباً بك في صانع الإمبدز! عدل الأساسيات، الصور، ثم احفظه أو عدل رسالة مرسلة.", 
@@ -391,7 +391,6 @@ class OldEmbedSelect(discord.ui.Select):
         else:
             default_emb = discord.Embed(title=selected_name, description="محتوى الإمبد...")
 
-        # تم ضبط اسم الإمبد هنا بشكل صحيح ليتطابق مع الاسم المختار تماماً بدون لصق `main_embed`
         view = AdvancedEmbedBuilderView(
             author=interaction.user, 
             embed_name=selected_name, 
@@ -399,6 +398,7 @@ class OldEmbedSelect(discord.ui.Select):
             saved_message_url=saved_url
         )
         
+        # التعديل هنا: استخدام embed=view.current_embed لضمان عرض الإمبد الحقيقي المختار وليس الإمبد الافتراضي للواجهة
         await interaction.response.edit_message(content=f"📁 تم تحميل الإمبد: `{selected_name}`", embed=view.current_embed, view=view)
 
 class OldEmbedsView(discord.ui.View):
