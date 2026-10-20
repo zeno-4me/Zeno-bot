@@ -113,6 +113,9 @@ class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمب
     def __init__(self, view):
         super().__init__()
         self.builder_view = view
+        # إذا كنا نعدل إمبد محفوظ مسبقاً، نثبت اسمه الافتراضي عشان ما يتسجل كإمبد جديد بالغلط
+        if self.builder_view.embed_name and self.builder_view.embed_name != "custom":
+            self.embed_name_input.default = self.builder_view.embed_name
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -146,7 +149,7 @@ class ApplyEmbedEditModal(discord.ui.Modal, title="تعديل الإمبد ال�
         target_url = self.url_input.value.strip() or self.builder_view.saved_message_url
         
         if not target_url:
-            await interaction.followup.send("❌ يرجى توفير رابط الرسالة المراد تعديلها!", ephemeral=True)
+            await interaction.followup.send("❌ يرجى توفير رابط الرسالة المراد تعديلها، أو إرسال الإمبد كرسالة جديدة أولاً!", ephemeral=True)
             return
 
         guild_id, channel_id, message_id = parse_discord_message_url(target_url)
@@ -169,7 +172,7 @@ class ApplyEmbedEditModal(discord.ui.Modal, title="تعديل الإمبد ال�
             }
             await db.save_custom_embed(interaction.guild_id, self.builder_view.embed_name, data)
             
-            await interaction.followup.send(f"🔄 تم تطبيق التعديلات بنجاح على الرسالة الأصلية!", ephemeral=True)
+            await interaction.followup.send(f"🔄 تم تحديث وتعديل الرسالة المرسلة بنجاح!", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ متعذر تعديل الرسالة، قد تكون محذوفة أو يفتقد البوت لصلاحية التعديل عليها: {e}", ephemeral=True)
 
@@ -376,6 +379,7 @@ class OldEmbedSelect(discord.ui.Select):
         all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
         embed_data = all_embeds.get(selected_name, {})
         
+        # تم تصحيح هذه الجزئية لتجلب محتوى الإمبد القديم بدلاً من إمبد فارغ
         default_emb = discord.Embed.from_dict(embed_data.get("embed", {})) if embed_data.get("embed") else discord.Embed(title=selected_name, description="محتوى الإمبد...")
         saved_url = embed_data.get("message_url", None)
 
@@ -471,7 +475,7 @@ class DashboardSelectMenu(discord.ui.Select):
             embed.add_field(name="💬 الردود التلقائية الحالية (متعددة/عشوائية)", value=resp_str, inline=False)
             await interaction.response.edit_message(embed=embed, view=AutoResponseView())
 
-        elif sel == "xp":
+        elif sel.lower() == "xp":
             embed = discord.Embed(title="⭐ إعدادات نظام اللفل والخبرة", color=discord.Color.gold())
             lvl_chan = interaction.guild.get_channel(st['level_up_channel_id'])
             embed.add_field(name="قناة تنبيهات اللفل", value=lvl_chan.mention if lvl_chan else "لم تحدد (تلقائي في الشات)", inline=False)
@@ -485,7 +489,7 @@ class MainDashboardView(discord.ui.View):
         self.add_item(DashboardSelectMenu())
 
 class Dashboard(commands.Cog):
-    def __init__(self, bot):
+    def __init__(belf, bot):
         self.bot = bot
 
     @app_commands.command(name="dashboard", description="فتح لوحة تحكم السيرفر الشاملة لأغلب ضروريات البوت")
