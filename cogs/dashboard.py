@@ -7,6 +7,14 @@ from discord import app_commands
 from discord.ext import commands
 from database import db
 
+# دالة مساعدة لاستخراج آيدي القناة وآيدي الرسالة من رابط الرسالة (Message URL)
+def parse_discord_message_url(url: str):
+    pattern = r"https://(?:ptb\.|canary\.)?discord\.com/channels/(\d+)/(\d+)/(\d+)"
+    match = re.search(pattern, url.strip())
+    if match:
+        return int(match.group(1)), int(match.group(2)), int(match.group(3))
+    return None, None, None
+
 # Modals
 class EditWelcomeModal(discord.ui.Modal, title="تعديل رسالة الترحيب"):
     welcome_msg = discord.ui.TextInput(label="رسالة الترحيب", style=discord.TextStyle.paragraph, placeholder="مرحباً بك {user} في سيرفر {server}!", required=True)
@@ -124,14 +132,56 @@ class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمب
         await db.save_custom_embed(interaction.guild_id, name, data)
         await interaction.followup.send(f"✅ تم حفظ الإمبد باسم `{name}` وإرساله بنجاح!", ephemeral=True)
 
+class ApplyEmbedEditModal(discord.ui.Modal, title="تعديل الإمبد المرسل"):
+    url_input = discord.ui.TextInput(label="رابط الرسالة الأصلية (Message URL)", placeholder="https://discord.com/channels/...", required=False)
+
+    def __init__(self, builder_view):
+        super().__init__()
+        self.builder_view = builder_view
+        if builder_view.saved_message_url:
+            self.url_input.default = builder_view.saved_message_url
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        target_url = self.url_input.value.strip() or self.builder_view.saved_message_url
+        
+        if not target_url:
+            await interaction.followup.send("❌ يرجى توفير رابط الرسالة المراد تعديلها!", ephemeral=True)
+            return
+
+        guild_id, channel_id, message_id = parse_discord_message_url(target_url)
+        if not channel_id or not message_id:
+            await interaction.followup.send("❌ صيغة رابط الرسالة غير صحيحة!", ephemeral=True)
+            return
+
+        channel = interaction.guild.get_channel(channel_id)
+        if not channel:
+            await interaction.followup.send("❌ لم يتم العثور على القناة في السيرفر!", ephemeral=True)
+            return
+
+        try:
+            target_msg = await channel.fetch_message(message_id)
+            await target_msg.edit(embed=self.builder_view.current_embed)
+            
+            data = {
+                "embed": self.builder_view.current_embed.to_dict(),
+                "message_url": target_url
+            }
+            await db.save_custom_embed(interaction.guild_id, self.builder_view.embed_name, data)
+            
+            await interaction.followup.send(f"🔄 تم تطبيق التعديلات بنجاح على الرسالة الأصلية!", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ متعذر تعديل الرسالة، قد تكون محذوفة أو يفتقد البوت لصلاحية التعديل عليها: {e}", ephemeral=True)
+
 class AdvancedEmbedBuilderView(discord.ui.View):
-    def __init__(self, author: discord.Member, embed_name: str = "custom", default_embed: discord.Embed = None):
+    def __init__(self, author: discord.Member, embed_name: str = "custom", default_embed: discord.Embed = None, saved_message_url: str = None):
         super().__init__(timeout=300)
         self.author = author
         self.embed_name = embed_name
+        self.saved_message_url = saved_message_url
         self.current_embed = default_embed or discord.Embed(
             title="📌 صانع الإمبدز",
-            description="مرحباً بك في صانع الإمبدز! عدل الأساسيات، الصور، ثم احفظه وأرسله.", 
+            description="مرحباً بك في صانع الإمبدز! عدل الأساسيات، الصور، ثم احفظه أو عدل رسالة مرسلة.", 
             color=discord.Color.blurple()
         )
 
@@ -148,6 +198,10 @@ class AdvancedEmbedBuilderView(discord.ui.View):
     @discord.ui.button(label="تعديل الصور", style=discord.ButtonStyle.secondary, row=0)
     async def edit_images(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EmbedImagesModal(self.current_embed, self))
+
+    @discord.ui.button(label="التعديل على ايمبد مرسل", style=discord.ButtonStyle.primary, row=1)
+    async def apply_edit_to_original(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ApplyEmbedEditModal(self))
 
     @discord.ui.button(label="ارسال الايمبد", style=discord.ButtonStyle.success, row=1)
     async def prompt_send_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -265,17 +319,20 @@ class EmbedsSectionView(discord.ui.View):
         saved_data = await db.get_custom_embed(interaction.guild_id, "main_embed")
         if saved_data:
             default_emb = discord.Embed.from_dict(saved_data.get("embed", {}))
+            saved_url = saved_data.get("message_url", None)
         else:
             default_emb = discord.Embed(
                 title="📌 صانع الإمبدز", 
                 description="صمم إمبدك الخاص بكل إتقان.", 
                 color=discord.Color.green()
             )
+            saved_url = None
 
         view = AdvancedEmbedBuilderView(
             author=interaction.user, 
             embed_name="main_embed", 
-            default_embed=default_emb
+            default_embed=default_emb,
+            saved_message_url=saved_url
         )
         await interaction.response.send_message(embed=view.current_embed, view=view, ephemeral=True)
 
@@ -320,11 +377,13 @@ class OldEmbedSelect(discord.ui.Select):
         embed_data = all_embeds.get(selected_name, {})
         
         default_emb = discord.Embed.from_dict(embed_data.get("embed", {})) if embed_data.get("embed") else discord.Embed(title=selected_name, description="محتوى الإمبد...")
+        saved_url = embed_data.get("message_url", None)
 
         view = AdvancedEmbedBuilderView(
             author=interaction.user, 
             embed_name=selected_name, 
-            default_embed=default_emb
+            default_embed=default_emb,
+            saved_message_url=saved_url
         )
         await interaction.response.send_message(embed=view.current_embed, view=view, ephemeral=True)
 
@@ -343,9 +402,7 @@ class DeleteEmbedSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         selected_name = self.values[0]
-        await db.save_custom_embed(interaction.guild_id, selected_name, {})
         
-        # إزالة الإمبد بالكامل من الدكت أو قاعدة البيانات (تحديث الجداول إذا لزم)
         async with db.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT custom_embeds FROM guild_settings WHERE guild_id = $1", interaction.guild_id)
             if row and row['custom_embeds']:
