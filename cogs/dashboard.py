@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+import json
 import random
 import re
 import discord
@@ -87,9 +88,19 @@ class EmbedBasicsAndFooterModal(discord.ui.Modal, title="تعديل الأساس
         if self.e_footer.value: self.embed.set_footer(text=self.e_footer.value)
         else: self.embed.remove_footer()
 
-        # التصحيح السحري هنا: استخدام defer و edit_original_response للمودال
-        await interaction.response.defer()
-        await interaction.edit_original_response(embed=self.embed, view=self.embed_view)
+        try:
+            await interaction.response.defer()
+        except:
+            pass
+        
+        try:
+            await interaction.edit_original_response(embed=self.embed, view=self.embed_view)
+        except:
+            try:
+                if interaction.message:
+                    await interaction.message.edit(embed=self.embed, view=self.embed_view)
+            except Exception as e:
+                print(f"Error editing message in modal: {e}")
 
 class EmbedImagesModal(discord.ui.Modal, title="تعديل الصور والروابط"):
     e_img = discord.ui.TextInput(label="رابط الصورة الكبيرة (URL)", required=False, placeholder="https://...")
@@ -107,9 +118,19 @@ class EmbedImagesModal(discord.ui.Modal, title="تعديل الصور والرو
         if self.e_thumb.value.startswith("http"): self.embed.set_thumbnail(url=self.e_thumb.value)
         else: self.embed.set_thumbnail(url=None)
         
-        # التصحيح هنا أيضاً لمنع انهيار المودال
-        await interaction.response.defer()
-        await interaction.edit_original_response(embed=self.embed, view=self.embed_view)
+        try:
+            await interaction.response.defer()
+        except:
+            pass
+        
+        try:
+            await interaction.edit_original_response(embed=self.embed, view=self.embed_view)
+        except:
+            try:
+                if interaction.message:
+                    await interaction.message.edit(embed=self.embed, view=self.embed_view)
+            except Exception as e:
+                print(f"Error editing message in modal: {e}")
 
 class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمبد"):
     embed_name_input = discord.ui.TextInput(label="اسم الإمبد (مطلوبة للحفظ)", placeholder="اكتب اسم الإمبد هنا...", required=True)
@@ -185,7 +206,7 @@ class AdvancedEmbedBuilderView(discord.ui.View):
         self.author = author
         self.embed_name = embed_name
         self.saved_message_url = saved_message_url
-        self.current_embed = default_embed or discord.Embed(
+        self.current_embed = default_embed if default_embed is not None else discord.Embed(
             title="📌 صانع الإمبدز",
             description="مرحباً بك في صانع الإمبدز! عدل الأساسيات، الصور، ثم احفظه أو عدل رسالة مرسلة.", 
             color=discord.Color.blurple()
@@ -323,8 +344,13 @@ class EmbedsSectionView(discord.ui.View):
     @discord.ui.button(label="صانع الإمبدز (الرئيسي)", style=discord.ButtonStyle.primary, row=0)
     async def open_embed_builder(self, interaction: discord.Interaction, button: discord.ui.Button):
         saved_data = await db.get_custom_embed(interaction.guild_id, "main_embed")
+        if isinstance(saved_data, str):
+            try: saved_data = json.loads(saved_data)
+            except: saved_data = {}
+        
         if saved_data:
-            default_emb = discord.Embed.from_dict(saved_data.get("embed", {}))
+            embed_dict = saved_data.get("embed", saved_data)
+            default_emb = discord.Embed.from_dict(embed_dict) if embed_dict else discord.Embed(title="📌 صانع الإمبدز", description="صمم إمبدك الخاص بكل إتقان.", color=discord.Color.green())
             saved_url = saved_data.get("message_url", None)
         else:
             default_emb = discord.Embed(
@@ -345,12 +371,18 @@ class EmbedsSectionView(discord.ui.View):
     @discord.ui.button(label="تعديل الإمبدز المحفوظة", style=discord.ButtonStyle.success, row=0)
     async def edit_old_embeds(self, interaction: discord.Interaction, button: discord.ui.Button):
         all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
-        view = OldEmbedsView(all_embeds)
+        if isinstance(all_embeds, str):
+            try: all_embeds = json.loads(all_embeds)
+            except: all_embeds = {}
+        view = OldEmbedsView(all_embeds or {})
         await interaction.response.send_message("📁 اختر الإمبد المحفوظ الذي تريد تعديله:", view=view, ephemeral=True)
 
     @discord.ui.button(label="🗑️ حذف إمبد محفوظ", style=discord.ButtonStyle.danger, row=1)
     async def delete_old_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
         all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
+        if isinstance(all_embeds, str):
+            try: all_embeds = json.loads(all_embeds)
+            except: all_embeds = {}
         if not all_embeds:
             await interaction.response.send_message("❌ لا توجد أي إمبدز محفوظة حالياً للحذف!", ephemeral=True)
             return
@@ -365,8 +397,9 @@ class EmbedsSectionView(discord.ui.View):
 class OldEmbedSelect(discord.ui.Select):
     def __init__(self, embeds_dict: dict):
         options = []
-        for name in embeds_dict.keys():
-            options.append(discord.SelectOption(label=name, description=f"تعديل الإمبد المحفوظ: {name}", emoji="📁"))
+        if embeds_dict:
+            for name in embeds_dict.keys():
+                options.append(discord.SelectOption(label=name, description=f"تعديل الإمبد المحفوظ: {name}", emoji="📁"))
         
         if not options:
             options.append(discord.SelectOption(label="لا توجد إمبدز محفوظة", description="قم بحفظ إمبد جديد أولاً", emoji="❌", value="none"))
@@ -380,17 +413,31 @@ class OldEmbedSelect(discord.ui.Select):
 
         selected_name = self.values[0]
         all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
+        if isinstance(all_embeds, str):
+            try: all_embeds = json.loads(all_embeds)
+            except: all_embeds = {}
+            
         embed_data = all_embeds.get(selected_name, {})
-        
-        if isinstance(embed_data, dict) and "embed" in embed_data:
-            raw_embed_dict = embed_data.get("embed")
-            saved_url = embed_data.get("message_url", None)
-        else:
-            raw_embed_dict = embed_data
-            saved_url = None
+        if isinstance(embed_data, str):
+            try: embed_data = json.loads(embed_data)
+            except: embed_data = {}
 
-        if raw_embed_dict:
-            default_emb = discord.Embed.from_dict(raw_embed_dict)
+        raw_embed_dict = None
+        saved_url = None
+
+        if isinstance(embed_data, dict):
+            if "embed" in embed_data:
+                raw_embed_dict = embed_data.get("embed")
+                saved_url = embed_data.get("message_url")
+            else:
+                raw_embed_dict = embed_data
+                saved_url = embed_data.get("message_url")
+
+        if raw_embed_dict and isinstance(raw_embed_dict, dict):
+            try:
+                default_emb = discord.Embed.from_dict(raw_embed_dict)
+            except:
+                default_emb = discord.Embed(title=selected_name, description="محتوى الإمبد...")
         else:
             default_emb = discord.Embed(title=selected_name, description="محتوى الإمبد...")
 
@@ -411,8 +458,9 @@ class OldEmbedsView(discord.ui.View):
 class DeleteEmbedSelect(discord.ui.Select):
     def __init__(self, embeds_dict: dict):
         options = []
-        for name in embeds_dict.keys():
-            options.append(discord.SelectOption(label=name, description=f"حذف الإمبد المحفوظ: {name}", emoji="🗑️"))
+        if embeds_dict:
+            for name in embeds_dict.keys():
+                options.append(discord.SelectOption(label=name, description=f"حذف الإمبد المحفوظ: {name}", emoji="🗑️"))
         
         super().__init__(placeholder="اختر الإمبد المراد حذفه...", min_values=1, max_values=1, options=options)
 
@@ -422,7 +470,6 @@ class DeleteEmbedSelect(discord.ui.Select):
         async with db.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT custom_embeds FROM guild_settings WHERE guild_id = $1", interaction.guild_id)
             if row and row['custom_embeds']:
-                import json
                 embeds = json.loads(row['custom_embeds'])
                 if selected_name in embeds:
                     del embeds[selected_name]
@@ -496,7 +543,7 @@ class DashboardSelectMenu(discord.ui.Select):
             await interaction.response.edit_message(embed=embed, view=XPSettingsView())
 
 class MainDashboardView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         super().__init__(timeout=None)
         self.add_item(DashboardSelectMenu())
 
