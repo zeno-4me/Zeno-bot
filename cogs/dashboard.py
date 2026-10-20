@@ -87,7 +87,9 @@ class EmbedBasicsAndFooterModal(discord.ui.Modal, title="تعديل الأساس
         if self.e_footer.value: self.embed.set_footer(text=self.e_footer.value)
         else: self.embed.remove_footer()
 
-        await interaction.response.edit_message(embed=self.embed, view=self.embed_view)
+        # التصحيح السحري هنا: استخدام defer و edit_original_response للمودال
+        await interaction.response.defer()
+        await interaction.edit_original_response(embed=self.embed, view=self.embed_view)
 
 class EmbedImagesModal(discord.ui.Modal, title="تعديل الصور والروابط"):
     e_img = discord.ui.TextInput(label="رابط الصورة الكبيرة (URL)", required=False, placeholder="https://...")
@@ -105,16 +107,16 @@ class EmbedImagesModal(discord.ui.Modal, title="تعديل الصور والرو
         if self.e_thumb.value.startswith("http"): self.embed.set_thumbnail(url=self.e_thumb.value)
         else: self.embed.set_thumbnail(url=None)
         
-        await interaction.response.edit_message(embed=self.embed, view=self.embed_view)
+        # التصحيح هنا أيضاً لمنع انهيار المودال
+        await interaction.response.defer()
+        await interaction.edit_original_response(embed=self.embed, view=self.embed_view)
 
 class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمبد"):
-    # تم إزالة القيمة الافتراضية الـ main_embed وجعل الحقل فارغاً مع بليس هولدر لتكتب الاسم بحرية
     embed_name_input = discord.ui.TextInput(label="اسم الإمبد (مطلوبة للحفظ)", placeholder="اكتب اسم الإمبد هنا...", required=True)
 
     def __init__(self, view):
         super().__init__()
         self.builder_view = view
-        # إذا كان الإمبد الحالي له اسم قديم مخصص (ليس الافتراضي)، نضعه، وإلا نتركه فارغاً تماماً
         if self.builder_view.embed_name and self.builder_view.embed_name != "main_embed" and self.builder_view.embed_name != "custom":
             self.embed_name_input.default = self.builder_view.embed_name
 
