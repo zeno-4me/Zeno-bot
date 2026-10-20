@@ -113,7 +113,8 @@ class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمب
     def __init__(self, view):
         super().__init__()
         self.builder_view = view
-        if self.builder_view.embed_name and self.builder_view.embed_name != "custom":
+        # تعبئة اسم الإمبد الحالي تلقائياً في المودال لضمان عدم حدوث تداخل
+        if self.builder_view.embed_name:
             self.embed_name_input.default = self.builder_view.embed_name
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -171,7 +172,7 @@ class ApplyEmbedEditModal(discord.ui.Modal, title="تعديل الإمبد ال�
             }
             await db.save_custom_embed(interaction.guild_id, self.builder_view.embed_name, data)
             
-            await interaction.followup.send(f"🔄 تم تحديث وتعديل الرسالة المرسلة بنجاح!", ephemeral=True)
+            await interaction.followup.send(f"🔄 تم تحديث وتعديل الرسالة المرسلة للإمبد `{self.builder_view.embed_name}` بنجاح!", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ متعذر تعديل الرسالة، قد تكون محذوفة أو يفتقد البوت لصلاحية التعديل عليها: {e}", ephemeral=True)
 
@@ -390,6 +391,7 @@ class OldEmbedSelect(discord.ui.Select):
         else:
             default_emb = discord.Embed(title=selected_name, description="محتوى الإمبد...")
 
+        # تم ضبط اسم الإمبد هنا بشكل صحيح ليتطابق مع الاسم المختار تماماً بدون لصق `main_embed`
         view = AdvancedEmbedBuilderView(
             author=interaction.user, 
             embed_name=selected_name, 
@@ -397,7 +399,6 @@ class OldEmbedSelect(discord.ui.Select):
             saved_message_url=saved_url
         )
         
-        # التعديل هنا لضمان إرسال الإمبد المحفوظ الحقيقي (`default_emb`) بدل الإمبد الافتراضي الفارغ
         await interaction.response.edit_message(content=f"📁 تم تحميل الإمبد: `{selected_name}`", embed=view.current_embed, view=view)
 
 class OldEmbedsView(discord.ui.View):
