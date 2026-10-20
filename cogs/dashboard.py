@@ -1,4 +1,4 @@
-import asyncio
+Import asyncio
 from datetime import datetime
 import random
 import re
@@ -132,7 +132,7 @@ class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمب
         await db.save_custom_embed(interaction.guild_id, name, data)
         await interaction.followup.send(f"✅ تم حفظ الإمبد باسم `{name}` وإرساله بنجاح!", ephemeral=True)
 
-class ApplyEmbedEditModal(discord.ui.Modal, title="تعديل إيمبد مرسل"):
+class ApplyEmbedEditModal(discord.ui.Modal, title="تطبيق التعديل على الرسالة الأصلية"):
     url_input = discord.ui.TextInput(label="رابط الرسالة الأصلية (Message URL)", placeholder="https://discord.com/channels/...", required=False)
 
     def __init__(self, builder_view):
@@ -199,11 +199,11 @@ class AdvancedEmbedBuilderView(discord.ui.View):
     async def edit_images(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EmbedImagesModal(self.current_embed, self))
 
-    @discord.ui.button(label="التعديل على إيمبد مرسل", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="🔄 تطبيق التعديل على الرسالة الأصلية", style=discord.ButtonStyle.primary, row=1)
     async def apply_edit_to_original(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(ApplyEmbedEditModal(self))
 
-    @discord.ui.button(label="إرسال الإيمبد", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="إرسال كـ إمبد جديد وحفظه", style=discord.ButtonStyle.success, row=1)
     async def prompt_send_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EmbedNameModal(self))
 
@@ -339,20 +339,8 @@ class EmbedsSectionView(discord.ui.View):
     @discord.ui.button(label="تعديل الإمبدز المحفوظة", style=discord.ButtonStyle.success, row=0)
     async def edit_old_embeds(self, interaction: discord.Interaction, button: discord.ui.Button):
         all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
-        if not all_embeds:
-            await interaction.response.send_message("❌ لا توجد إمبدز محفوظة لتعديلها!", ephemeral=True)
-            return
         view = OldEmbedsView(all_embeds)
         await interaction.response.send_message("📁 اختر الإمبد المحفوظ الذي تريد تعديله:", view=view, ephemeral=True)
-
-    @discord.ui.button(label="حذف إمبد محفوظ", style=discord.ButtonStyle.danger, row=1)
-    async def delete_old_embeds(self, interaction: discord.Interaction, button: discord.ui.Button):
-        all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
-        if not all_embeds:
-            await interaction.response.send_message("❌ لا توجد إمبدز محفوظة للحذف!", ephemeral=True)
-            return
-        view = DeleteEmbedView(all_embeds)
-        await interaction.response.send_message("🗑️ اختر الإيمبد المحفوظ الذي تريد حذفه:", view=view, ephemeral=True)
 
     @discord.ui.button(label="الرجوع للصفحة الرئيسية", style=discord.ButtonStyle.secondary, row=1)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -394,33 +382,6 @@ class OldEmbedsView(discord.ui.View):
     def __init__(self, embeds_dict: dict):
         super().__init__(timeout=None)
         self.add_item(OldEmbedSelect(embeds_dict))
-
-class DeleteEmbedSelect(discord.ui.Select):
-    def __init__(self, embeds_dict: dict):
-        options = [discord.SelectOption(label=name, description=f"حذف الإيمبد: {name}", emoji="🗑️") for name in embeds_dict.keys()]
-        super().__init__(placeholder="اختر الإيمبد المحفوظ لحذفه...", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        selected_name = self.values[0]
-        
-        # حذف الإيمبد من قاعدة البيانات
-        if hasattr(db, "delete_custom_embed"):
-            await db.delete_custom_embed(interaction.guild_id, selected_name)
-        elif hasattr(db, "remove_custom_embed"):
-            await db.remove_custom_embed(interaction.guild_id, selected_name)
-        else:
-            # طريقة بديلة افتراضية في حال عدم توفر دالة حذف مخصصة
-            all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
-            if selected_name in all_embeds:
-                del all_embeds[selected_name]
-                await db.save_custom_embed(interaction.guild_id, selected_name, None) # أو حفظ القائمة المحدثة حسب نظام الداتابيز عندك
-                
-        await interaction.response.send_message(f"✅ تم حذف الإيمبد المحفوظ `{selected_name}` بنجاح!", ephemeral=True)
-
-class DeleteEmbedView(discord.ui.View):
-    def __init__(self, embeds_dict: dict):
-        super().__init__(timeout=None)
-        self.add_item(DeleteEmbedSelect(embeds_dict))
 
 class DashboardSelectMenu(discord.ui.Select):
     def __init__(self):
