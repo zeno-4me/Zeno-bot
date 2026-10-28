@@ -1,4 +1,4 @@
-Import asyncio
+import asyncio
 from datetime import datetime
 import random
 import re
@@ -125,11 +125,12 @@ class EmbedNameModal(discord.ui.Modal, title="تسمية وإرسال الإمب
         self.builder_view.embed_name = name
         sent_msg = await interaction.channel.send(embed=self.builder_view.current_embed)
         
-        data = {
-            "embed": self.builder_view.current_embed.to_dict(),
-            "message_url": sent_msg.jump_url
-        }
-        await db.save_custom_embed(interaction.guild_id, name, data)
+        await db.save_custom_embed(
+            interaction.guild_id, name,
+            self.builder_view.current_embed.to_dict(),
+            new_message_url=sent_msg.jump_url
+        )
+        self.builder_view.saved_message_url = sent_msg.jump_url
         await interaction.followup.send(f"✅ تم حفظ الإمبد باسم `{name}` وإرساله بنجاح!", ephemeral=True)
 
 class ApplyEmbedEditModal(discord.ui.Modal, title="تطبيق التعديل على الرسالة الأصلية"):
@@ -163,11 +164,12 @@ class ApplyEmbedEditModal(discord.ui.Modal, title="تطبيق التعديل ع�
             target_msg = await channel.fetch_message(message_id)
             await target_msg.edit(embed=self.builder_view.current_embed)
             
-            data = {
-                "embed": self.builder_view.current_embed.to_dict(),
-                "message_url": target_url
-            }
-            await db.save_custom_embed(interaction.guild_id, self.builder_view.embed_name, data)
+            await db.save_custom_embed(
+                interaction.guild_id, self.builder_view.embed_name,
+                self.builder_view.current_embed.to_dict(),
+                new_message_url=target_url
+            )
+            self.builder_view.saved_message_url = target_url
             
             await interaction.followup.send(f"🔄 تم تطبيق التعديلات بنجاح على الرسالة الأصلية!", ephemeral=True)
         except Exception as e:
@@ -367,7 +369,7 @@ class OldEmbedSelect(discord.ui.Select):
         all_embeds = await db.get_all_custom_embeds(interaction.guild_id)
         embed_data = all_embeds.get(selected_name, {})
         
-        default_emb = discord.Embed.from_dict(embed_data.get("embed", {})) if embed_data.get("embed") else discord.Embed(title=selected_name, description="محتوى الإمبد...")
+        default_emb = discord.Embed.from_dict(embed_data["embed"]) if embed_data.get("embed") else discord.Embed(title=selected_name, description="محتوى الإمبد...")
         saved_url = embed_data.get("message_url", None)
 
         view = AdvancedEmbedBuilderView(
