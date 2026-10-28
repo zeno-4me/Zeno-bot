@@ -177,6 +177,34 @@ class Database:
             await conn.execute(f"UPDATE guild_settings SET {column} = $1 WHERE guild_id = $2", value, guild_id)
 
     # --- نظام متغيرات الإمبدز وقائمة روابط الرسائل (Message URLs) ---
+    @staticmethod
+    def _normalize_embed_record(data):
+        """يرجّع دائماً {"embed": dict, "message_urls": list, "message_url": str|None}
+        ويفك التداخل القديم الناتج عن حفظ {"embed": {...}, "message_url": ...} داخل حقل embed."""
+        urls = []
+        embed = data
+        if isinstance(embed, dict) and "embed" not in embed and "message_urls" in embed:
+            embed = {}
+        while isinstance(embed, dict) and isinstance(embed.get("embed"), dict):
+            for u in embed.get("message_urls", []) or []:
+                if u and u not in urls:
+                    urls.append(u)
+            u = embed.get("message_url")
+            if u and u not in urls:
+                urls.append(u)
+            outer = embed
+            embed = outer["embed"]
+        if isinstance(data, dict):
+            for u in data.get("message_urls", []) or []:
+                if u and u not in urls:
+                    urls.append(u)
+            u = data.get("message_url")
+            if u and u not in urls:
+                urls.append(u)
+        if not isinstance(embed, dict):
+            embed = {}
+        return {"embed": embed, "message_urls": urls, "message_url": urls[-1] if urls else None}
+
     async def save_custom_embed(self, guild_id: int, embed_name: str, embed_dict: dict, new_message_url: str = None):
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
@@ -185,23 +213,18 @@ class Database:
             if row and row['custom_embeds']:
                 try:
                     embeds = json.loads(row['custom_embeds'])
-                except:
+                except Exception:
                     embeds = {}
-            
-            # جلب أو إنشاء سجل المتغير الحالي
-            current_data = embeds.get(embed_name, {})
-            if not isinstance(current_data, dict):
-                current_data = {"embed": current_data, "message_urls": []}
-            
-            urls_list = current_data.get("message_urls", [])
-            if new_message_url and new_message_url not in urls_list:
-                urls_list.append(new_message_url)
 
-            # تحديث الداتا مع الحفاظ على الروابط
-            current_data["embed"] = embed_dict
-            current_data["message_urls"] = urls_list
-            
-            embeds[embed_name] = current_data
+            current = self._normalize_embed_record(embeds.get(embed_name, {}))
+            incoming = self._normalize_embed_record(embed_dict)  # يحمي من تمرير dict متداخل
+
+            urls = current["message_urls"]
+            for u in incoming["message_urls"] + ([new_message_url] if new_message_url else []):
+                if u and u not in urls:
+                    urls.append(u)
+
+            embeds[embed_name] = {"embed": incoming["embed"], "message_urls": urls}
             await conn.execute("UPDATE guild_settings SET custom_embeds = $1 WHERE guild_id = $2", json.dumps(embeds), guild_id)
 
     async def get_custom_embed(self, guild_id: int, embed_name: str):
@@ -211,13 +234,11 @@ class Database:
             if row and row['custom_embeds']:
                 try:
                     embeds = json.loads(row['custom_embeds'])
-                    data = embeds.get(embed_name)
-                    if isinstance(data, dict):
-                        return data
-                    elif data:
-                        return {"embed": data, "message_urls": []}
-                except:
+                except Exception:
                     return None
+                data = embeds.get(embed_name)
+                if data:
+                    return self._normalize_embed_record(data)
             return None
 
     async def get_all_custom_embeds(self, guild_id: int):
@@ -227,15 +248,9 @@ class Database:
             if row and row['custom_embeds']:
                 try:
                     raw_embeds = json.loads(row['custom_embeds'])
-                    formatted = {}
-                    for name, data in raw_embeds.items():
-                        if isinstance(data, dict) and "embed" in data:
-                            formatted[name] = data
-                        else:
-                            formatted[name] = {"embed": data, "message_urls": []}
-                    return formatted
-                except:
+                except Exception:
                     return {}
+                return {name: self._normalize_embed_record(data) for name, data in raw_embeds.items()}
             return {}
 
     async def delete_custom_embed(self, guild_id: int, embed_name: str):
