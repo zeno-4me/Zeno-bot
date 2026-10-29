@@ -122,6 +122,32 @@ class Database:
                     amount INT,
                     timestamp DOUBLE PRECISION
                 );
+
+                CREATE TABLE IF NOT EXISTS panels (
+                    id SERIAL PRIMARY KEY,
+                    guild_id BIGINT,
+                    name TEXT,
+                    ptype TEXT,
+                    embed TEXT,
+                    config TEXT,
+                    channel_id BIGINT DEFAULT 0,
+                    message_id BIGINT DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS tickets (
+                    channel_id BIGINT PRIMARY KEY,
+                    guild_id BIGINT,
+                    panel_id INT,
+                    owner_id BIGINT,
+                    number INT,
+                    status TEXT DEFAULT 'open',
+                    claimed_by BIGINT DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS ticket_counters (
+                    guild_id BIGINT PRIMARY KEY,
+                    last_number INT DEFAULT 0
+                );
             """)
 
             alter_queries = [
@@ -176,35 +202,113 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute(f"UPDATE guild_settings SET {column} = $1 WHERE guild_id = $2", value, guild_id)
 
-    # --- نظام متغيرات الإمبدز وقائمة روابط الرسائل (Message URLs) ---
-    @staticmethod
-    def _normalize_embed_record(data):
-        """يرجّع دائماً {"embed": dict, "message_urls": list, "message_url": str|None}
-        ويفك التداخل القديم الناتج عن حفظ {"embed": {...}, "message_url": ...} داخل حقل embed."""
-        urls = []
-        embed = data
-        if isinstance(embed, dict) and "embed" not in embed and "message_urls" in embed:
-            embed = {}
-        while isinstance(embed, dict) and isinstance(embed.get("embed"), dict):
-            for u in embed.get("message_urls", []) or []:
-                if u and u not in urls:
-                    urls.append(u)
-            u = embed.get("message_url")
-            if u and u not in urls:
-                urls.append(u)
-            outer = embed
-            embed = outer["embed"]
-        if isinstance(data, dict):
-            for u in data.get("message_urls", []) or []:
-                if u and u not in urls:
-                    urls.append(u)
-            u = data.get("message_url")
-            if u and u not in urls:
-                urls.append(u)
-        if not isinstance(embed, dict):
-            embed = {}
-        return {"embed": embed, "message_urls": urls, "message_url": urls[-1] if urls else None}
+    # --- دوال نظام اللوحات (Panels) والتذاكر المفقودة سابقاً ---
+    async def get_panels(self, guild_id: int):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM panels WHERE guild_id = $1 ORDER BY id DESC", guild_id)
+            return [dict(r) for r in rows]
 
+    async def get_panel(self, panel_id: int):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM panels WHERE id = $1", panel_id)
+            if not row:
+                return None
+            res = dict(row)
+            try:
+                res['embed'] = json.loads(res['embed']) if res['embed'] else {}
+            except:
+                res['embed'] = {}
+            try:
+                res['config'] = json.loads(res['config']) if res['config'] else {}
+            except:
+                res['config'] = {}
+            return res
+
+    async def get_panel_by_name(self, guild_id: int, name: str):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT id FROM panels WHERE guild_id = $1 AND name = $2", guild_id, name)
+            return row['id'] if row else None
+
+    async def create_panel(self, guild_id: int, name: str, ptype: str, embed: dict, config: dict):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                INSERT INTO panels (guild_id, name, ptype, embed, config)
+                VALUES ($1, $2, $3, $4, $5) RETURNING id
+            """, guild_id, name, ptype, json.dumps(embed), json.dumps(config))
+            return row['id']
+
+    async def update_panel(self, panel_id: int, **kwargs):
+        await self._ensure_connection()
+        allowed_cols = ['name', 'ptype', 'embed', 'config', 'channel_id', 'message_id']
+        updates = []
+        values = []
+        idx = 1
+        for k, v in kwargs.items():
+            if k in allowed_cols:
+                if isinstance(v, (dict, list)):
+                    v = json.dumps(v)
+                updates.append(f"{k} = ${idx}")
+                values.append(v)
+                idx += 1
+        if not updates:
+            return
+        values.append(panel_id)
+        async with self.pool.acquire() as conn:
+            await conn.execute(f"UPDATE panels SET {', '.join(updates)} WHERE id = ${idx}", *values)
+
+    async def delete_panel(self, panel_id: int):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM panels WHERE id = $1", panel_id)
+
+    async def next_ticket_number(self, guild_id: int) -> int:
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT last_number FROM ticket_counters WHERE guild_id = $1", guild_id)
+            if not row:
+                await conn.execute("INSERT INTO ticket_counters (guild_id, last_number) VALUES ($1, 1)", guild_id)
+                return 1
+            new_num = row['last_number'] + 1
+            await conn.execute("UPDATE ticket_counters SET last_number = $1 WHERE guild_id = $2", new_num, guild_id)
+            return new_num
+
+    async def create_ticket(self, channel_id: int, guild_id: int, panel_id: int, owner_id: int, number: int):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO tickets (channel_id, guild_id, panel_id, owner_id, number, status)
+                VALUES ($1, $2, $3, $4, $5, 'open')
+            """, channel_id, guild_id, panel_id, owner_id, number)
+
+    async def get_ticket(self, channel_id: int):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM tickets WHERE channel_id = $1", channel_id)
+            return dict(row) if row else None
+
+    async def get_open_tickets(self, guild_id: int, panel_id: int, owner_id: int):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM tickets WHERE guild_id = $1 AND panel_id = $2 AND owner_id = $3 AND status = 'open'
+            """, guild_id, panel_id, owner_id)
+            return [dict(r) for r in rows]
+
+    async def close_ticket(self, channel_id: int):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            await conn.execute("UPDATE tickets SET status = 'closed' WHERE channel_id = $1", channel_id)
+
+    async def set_ticket_claim(self, channel_id: int, user_id: int):
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            await conn.execute("UPDATE tickets SET claimed_by = $1 WHERE channel_id = $2", user_id, channel_id)
+
+    # --- نظام متغيرات الإمبدز وقائمة روابط الرسائل (Message URLs) ---
     async def save_custom_embed(self, guild_id: int, embed_name: str, embed_dict: dict, new_message_url: str = None):
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
@@ -213,18 +317,21 @@ class Database:
             if row and row['custom_embeds']:
                 try:
                     embeds = json.loads(row['custom_embeds'])
-                except Exception:
+                except:
                     embeds = {}
+            
+            current_data = embeds.get(embed_name, {})
+            if not isinstance(current_data, dict):
+                current_data = {"embed": current_data, "message_urls": []}
+            
+            urls_list = current_data.get("message_urls", [])
+            if new_message_url and new_message_url not in urls_list:
+                urls_list.append(new_message_url)
 
-            current = self._normalize_embed_record(embeds.get(embed_name, {}))
-            incoming = self._normalize_embed_record(embed_dict)  # يحمي من تمرير dict متداخل
-
-            urls = current["message_urls"]
-            for u in incoming["message_urls"] + ([new_message_url] if new_message_url else []):
-                if u and u not in urls:
-                    urls.append(u)
-
-            embeds[embed_name] = {"embed": incoming["embed"], "message_urls": urls}
+            current_data["embed"] = embed_dict
+            current_data["message_urls"] = urls_list
+            
+            embeds[embed_name] = current_data
             await conn.execute("UPDATE guild_settings SET custom_embeds = $1 WHERE guild_id = $2", json.dumps(embeds), guild_id)
 
     async def get_custom_embed(self, guild_id: int, embed_name: str):
@@ -234,11 +341,13 @@ class Database:
             if row and row['custom_embeds']:
                 try:
                     embeds = json.loads(row['custom_embeds'])
-                except Exception:
+                    data = embeds.get(embed_name)
+                    if isinstance(data, dict):
+                        return data
+                    elif data:
+                        return {"embed": data, "message_urls": []}
+                except:
                     return None
-                data = embeds.get(embed_name)
-                if data:
-                    return self._normalize_embed_record(data)
             return None
 
     async def get_all_custom_embeds(self, guild_id: int):
@@ -248,9 +357,15 @@ class Database:
             if row and row['custom_embeds']:
                 try:
                     raw_embeds = json.loads(row['custom_embeds'])
-                except Exception:
+                    formatted = {}
+                    for name, data in raw_embeds.items():
+                        if isinstance(data, dict) and "embed" in data:
+                            formatted[name] = data
+                        else:
+                            formatted[name] = {"embed": data, "message_urls": []}
+                    return formatted
+                except:
                     return {}
-                return {name: self._normalize_embed_record(data) for name, data in raw_embeds.items()}
             return {}
 
     async def delete_custom_embed(self, guild_id: int, embed_name: str):
