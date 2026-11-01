@@ -1,4 +1,6 @@
+import asyncio
 import asyncpg
+import copy
 import math
 import time
 from datetime import datetime
@@ -6,17 +8,35 @@ import discord
 import os
 import json
 
+SETTINGS_TTL = 60     # ثانية
+AUTORESP_TTL = 120
+ALIAS_TTL = 120
+PANEL_TTL = 600
+
+
 class Database:
     def __init__(self, db_url: str = None):
         self.db_url = db_url or os.getenv("DATABASE_URL")
         self.pool = None
+        self._lock = None
+        # كاش بالذاكرة: يقلل الاستعلامات على كل رسالة/ضغطة زر. يُمسح تلقائياً عند أي تعديل.
+        self._settings_cache = {}
+        self._autoresp_cache = {}
+        self._alias_cache = {}
+        self._panel_cache = {}
 
     async def connect(self):
-        if not self.pool:
+        if self.pool:
+            return
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if self.pool:
+                return
             self.db_url = self.db_url or os.getenv("DATABASE_URL")
             if not self.db_url:
                 raise ValueError("DATABASE_URL environment variable is missing!")
-            self.pool = await asyncpg.create_pool(self.db_url)
+            self.pool = await asyncpg.create_pool(self.db_url, min_size=1, max_size=10, command_timeout=30)
             await self._create_tables()
 
     async def _ensure_connection(self):
@@ -162,7 +182,9 @@ class Database:
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS anti_invites INT DEFAULT 0;",
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS anti_spam INT DEFAULT 0;",
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS ticket_support_role_ids TEXT DEFAULT '[]';",
-                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS custom_embeds TEXT DEFAULT '{}';"
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS custom_embeds TEXT DEFAULT '{}';",
+                "CREATE INDEX IF NOT EXISTS idx_activity_lookup ON activity_log (guild_id, user_id, timestamp);",
+                "CREATE INDEX IF NOT EXISTS idx_tickets_lookup ON tickets (guild_id, panel_id, owner_id);"
             ]
 
             for query in alter_queries:
@@ -172,35 +194,41 @@ class Database:
                     pass
 
     async def get_guild_settings(self, guild_id: int):
+        hit = self._settings_cache.get(guild_id)
+        if hit and time.time() - hit[0] < SETTINGS_TTL:
+            return dict(hit[1])
+
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM guild_settings WHERE guild_id = $1", guild_id)
             if not row:
-                await conn.execute("INSERT INTO guild_settings (guild_id) VALUES ($1)", guild_id)
-                return await self.get_guild_settings(guild_id)
-            
-            res = dict(row)
-            try:
-                if isinstance(res.get('ticket_support_role_ids'), str):
-                    res['ticket_support_role_ids'] = json.loads(res['ticket_support_role_ids'])
-            except:
-                res['ticket_support_role_ids'] = []
-                
-            try:
-                if isinstance(res.get('custom_embeds'), str):
-                    res['custom_embeds'] = json.loads(res['custom_embeds'])
-            except:
-                res['custom_embeds'] = {}
-                
-            return res
+                await conn.execute(
+                    "INSERT INTO guild_settings (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING", guild_id)
+                row = await conn.fetchrow("SELECT * FROM guild_settings WHERE guild_id = $1", guild_id)
+
+        res = dict(row)
+        try:
+            if isinstance(res.get('ticket_support_role_ids'), str):
+                res['ticket_support_role_ids'] = json.loads(res['ticket_support_role_ids'])
+        except Exception:
+            res['ticket_support_role_ids'] = []
+        try:
+            if isinstance(res.get('custom_embeds'), str):
+                res['custom_embeds'] = json.loads(res['custom_embeds'])
+        except Exception:
+            res['custom_embeds'] = {}
+
+        self._settings_cache[guild_id] = (time.time(), res)
+        return dict(res)
 
     async def update_guild_setting(self, guild_id: int, column: str, value):
         await self._ensure_connection()
         if isinstance(value, (list, dict)):
             value = json.dumps(value)
-            
+
         async with self.pool.acquire() as conn:
             await conn.execute(f"UPDATE guild_settings SET {column} = $1 WHERE guild_id = $2", value, guild_id)
+        self._settings_cache.pop(guild_id, None)
 
     # --- دوال نظام اللوحات (Panels) والتذاكر المفقودة سابقاً ---
     async def get_panels(self, guild_id: int):
@@ -210,21 +238,26 @@ class Database:
             return [dict(r) for r in rows]
 
     async def get_panel(self, panel_id: int):
+        hit = self._panel_cache.get(panel_id)
+        if hit and time.time() - hit[0] < PANEL_TTL:
+            return copy.deepcopy(hit[1])
+
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM panels WHERE id = $1", panel_id)
-            if not row:
-                return None
-            res = dict(row)
-            try:
-                res['embed'] = json.loads(res['embed']) if res['embed'] else {}
-            except:
-                res['embed'] = {}
-            try:
-                res['config'] = json.loads(res['config']) if res['config'] else {}
-            except:
-                res['config'] = {}
-            return res
+        if not row:
+            return None
+        res = dict(row)
+        try:
+            res['embed'] = json.loads(res['embed']) if res['embed'] else {}
+        except Exception:
+            res['embed'] = {}
+        try:
+            res['config'] = json.loads(res['config']) if res['config'] else {}
+        except Exception:
+            res['config'] = {}
+        self._panel_cache[panel_id] = (time.time(), res)
+        return copy.deepcopy(res)
 
     async def get_panel_by_name(self, guild_id: int, name: str):
         await self._ensure_connection()
@@ -259,11 +292,13 @@ class Database:
         values.append(panel_id)
         async with self.pool.acquire() as conn:
             await conn.execute(f"UPDATE panels SET {', '.join(updates)} WHERE id = ${idx}", *values)
+        self._panel_cache.pop(panel_id, None)
 
     async def delete_panel(self, panel_id: int):
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM panels WHERE id = $1", panel_id)
+        self._panel_cache.pop(panel_id, None)
 
     async def next_ticket_number(self, guild_id: int) -> int:
         await self._ensure_connection()
@@ -333,6 +368,7 @@ class Database:
             
             embeds[embed_name] = current_data
             await conn.execute("UPDATE guild_settings SET custom_embeds = $1 WHERE guild_id = $2", json.dumps(embeds), guild_id)
+            self._settings_cache.pop(guild_id, None)
 
     async def get_custom_embed(self, guild_id: int, embed_name: str):
         await self._ensure_connection()
@@ -378,6 +414,7 @@ class Database:
                     if embed_name in embeds:
                         del embeds[embed_name]
                         await conn.execute("UPDATE guild_settings SET custom_embeds = $1 WHERE guild_id = $2", json.dumps(embeds), guild_id)
+                        self._settings_cache.pop(guild_id, None)
                 except:
                     pass
 
@@ -395,14 +432,19 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetch("SELECT level, role_id FROM level_rewards WHERE guild_id = $1 ORDER BY level ASC", guild_id)
 
+    async def _user_row(self, conn, guild_id: int, user_id: int, lock: bool = False):
+        q = "SELECT * FROM user_levels WHERE guild_id = $1 AND user_id = $2" + (" FOR UPDATE" if lock else "")
+        row = await conn.fetchrow(q, guild_id, user_id)
+        if not row:
+            await conn.execute(
+                "INSERT INTO user_levels (guild_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", guild_id, user_id)
+            row = await conn.fetchrow(q, guild_id, user_id)
+        return row
+
     async def get_user_data(self, guild_id: int, user_id: int):
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT * FROM user_levels WHERE guild_id = $1 AND user_id = $2", guild_id, user_id)
-            if not row:
-                await conn.execute("INSERT INTO user_levels (guild_id, user_id) VALUES ($1, $2)", guild_id, user_id)
-                return await self.get_user_data(guild_id, user_id)
-            return row
+            return await self._user_row(conn, guild_id, user_id)
 
     async def set_user_xp_level(self, guild_id: int, user_id: int, text_xp: int, text_lvl: int):
         await self._ensure_connection()
@@ -413,33 +455,33 @@ class Database:
 
     async def add_text_xp(self, guild_id: int, user_id: int, xp_amount: int):
         await self._ensure_connection()
-        data = await self.get_user_data(guild_id, user_id)
-        current_xp = data['text_xp'] + xp_amount
-        current_lvl = data['text_level']
-        new_lvl = int(math.sqrt(current_xp / 100)) + 1
-        leveled_up = new_lvl > current_lvl
-
         async with self.pool.acquire() as conn:
-            await conn.execute("""
-                UPDATE user_levels SET text_xp = $1, text_level = $2, last_msg_timestamp = $3 
-                WHERE guild_id = $4 AND user_id = $5
-            """, current_xp, new_lvl, time.time(), guild_id, user_id)
+            async with conn.transaction():
+                data = await self._user_row(conn, guild_id, user_id, lock=True)
+                current_xp = data['text_xp'] + xp_amount
+                current_lvl = data['text_level']
+                new_lvl = int(math.sqrt(current_xp / 100)) + 1
+                leveled_up = new_lvl > current_lvl
+                await conn.execute("""
+                    UPDATE user_levels SET text_xp = $1, text_level = $2, last_msg_timestamp = $3
+                    WHERE guild_id = $4 AND user_id = $5
+                """, current_xp, new_lvl, time.time(), guild_id, user_id)
         return leveled_up, new_lvl
 
     async def add_voice_xp(self, guild_id: int, user_id: int, xp_amount: int, time_add: int):
         await self._ensure_connection()
-        data = await self.get_user_data(guild_id, user_id)
-        current_xp = data['voice_xp'] + xp_amount
-        current_lvl = data['voice_level']
-        total_time = data['voice_time_seconds'] + time_add
-        new_lvl = int(math.sqrt(current_xp / 100)) + 1
-        leveled_up = new_lvl > current_lvl
-
         async with self.pool.acquire() as conn:
-            await conn.execute("""
-                UPDATE user_levels SET voice_xp = $1, voice_level = $2, voice_time_seconds = $3 
-                WHERE guild_id = $4 AND user_id = $5
-            """, current_xp, new_lvl, total_time, guild_id, user_id)
+            async with conn.transaction():
+                data = await self._user_row(conn, guild_id, user_id, lock=True)
+                current_xp = data['voice_xp'] + xp_amount
+                current_lvl = data['voice_level']
+                total_time = data['voice_time_seconds'] + time_add
+                new_lvl = int(math.sqrt(current_xp / 100)) + 1
+                leveled_up = new_lvl > current_lvl
+                await conn.execute("""
+                    UPDATE user_levels SET voice_xp = $1, voice_level = $2, voice_time_seconds = $3
+                    WHERE guild_id = $4 AND user_id = $5
+                """, current_xp, new_lvl, total_time, guild_id, user_id)
         return leveled_up, new_lvl
 
     async def add_warning(self, guild_id: int, user_id: int, moderator_id: int, reason: str):
@@ -469,17 +511,80 @@ class Database:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM economy WHERE guild_id = $1 AND user_id = $2", guild_id, user_id)
             if not row:
-                await conn.execute("INSERT INTO economy (guild_id, user_id) VALUES ($1, $2)", guild_id, user_id)
-                return await self.get_economy_data(guild_id, user_id)
+                await self._ensure_economy_row(conn, guild_id, user_id)
+                row = await conn.fetchrow("SELECT * FROM economy WHERE guild_id = $1 AND user_id = $2", guild_id, user_id)
             return row
+
+    async def _ensure_economy_row(self, conn, guild_id: int, user_id: int):
+        await conn.execute(
+            "INSERT INTO economy (guild_id, user_id) VALUES ($1, $2) ON CONFLICT (guild_id, user_id) DO NOTHING",
+            guild_id, user_id)
 
     async def update_credits(self, guild_id: int, user_id: int, amount: int):
         await self._ensure_connection()
-        data = await self.get_economy_data(guild_id, user_id)
-        new_credits = max(0, data['credits'] + amount)
         async with self.pool.acquire() as conn:
-            await conn.execute("UPDATE economy SET credits = $1 WHERE guild_id = $2 AND user_id = $3", new_credits, guild_id, user_id)
-        return new_credits
+            await self._ensure_economy_row(conn, guild_id, user_id)
+            row = await conn.fetchrow(
+                "UPDATE economy SET credits = GREATEST(0, credits + $1::bigint) "
+                "WHERE guild_id = $2 AND user_id = $3 RETURNING credits",
+                amount, guild_id, user_id)
+            return row['credits']
+
+    async def transfer_credits(self, guild_id: int, from_id: int, to_id: int, amount: int):
+        """تحويل ذرّي بين عضوين. يرجع (نجح؟, رصيد المرسل)."""
+        await self._ensure_connection()
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                await self._ensure_economy_row(conn, guild_id, from_id)
+                await self._ensure_economy_row(conn, guild_id, to_id)
+                rows = await conn.fetch(
+                    "SELECT user_id, credits FROM economy WHERE guild_id = $1 AND user_id = ANY($2::bigint[]) "
+                    "ORDER BY user_id FOR UPDATE", guild_id, [from_id, to_id])
+                balances = {r['user_id']: r['credits'] for r in rows}
+                if balances.get(from_id, 0) < amount:
+                    return False, balances.get(from_id, 0)
+                await conn.execute(
+                    "UPDATE economy SET credits = credits - $1::bigint WHERE guild_id = $2 AND user_id = $3",
+                    amount, guild_id, from_id)
+                await conn.execute(
+                    "UPDATE economy SET credits = credits + $1::bigint WHERE guild_id = $2 AND user_id = $3",
+                    amount, guild_id, to_id)
+                return True, balances[from_id] - amount
+
+    async def claim_daily(self, guild_id: int, user_id: int, amount: int, cooldown: int = 86400):
+        """استلام يومي ذرّي. يرجع (نجح؟, الثواني المتبقية)."""
+        await self._ensure_connection()
+        now = time.time()
+        async with self.pool.acquire() as conn:
+            await self._ensure_economy_row(conn, guild_id, user_id)
+            row = await conn.fetchrow(
+                "UPDATE economy SET credits = credits + $1::bigint, last_daily = $2 "
+                "WHERE guild_id = $3 AND user_id = $4 AND last_daily <= $5 RETURNING credits",
+                amount, now, guild_id, user_id, now - cooldown)
+            if row:
+                return True, 0
+            last = await conn.fetchval(
+                "SELECT last_daily FROM economy WHERE guild_id = $1 AND user_id = $2", guild_id, user_id)
+            return False, max(1, int(cooldown - (now - (last or 0))))
+
+    async def claim_rep(self, guild_id: int, sender_id: int, target_id: int, cooldown: int = 43200):
+        """إعطاء سمعة ذرّي مع الكولداون. يرجع (نجح؟, الثواني المتبقية)."""
+        await self._ensure_connection()
+        now = time.time()
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                await self._ensure_economy_row(conn, guild_id, sender_id)
+                await self._ensure_economy_row(conn, guild_id, target_id)
+                row = await conn.fetchrow(
+                    "UPDATE economy SET last_rep = $1 WHERE guild_id = $2 AND user_id = $3 AND last_rep <= $4 "
+                    "RETURNING user_id", now, guild_id, sender_id, now - cooldown)
+                if not row:
+                    last = await conn.fetchval(
+                        "SELECT last_rep FROM economy WHERE guild_id = $1 AND user_id = $2", guild_id, sender_id)
+                    return False, max(1, int(cooldown - (now - (last or 0))))
+                await conn.execute(
+                    "UPDATE economy SET rep = rep + 1 WHERE guild_id = $1 AND user_id = $2", guild_id, target_id)
+                return True, 0
 
     async def set_daily_claimed(self, guild_id: int, user_id: int, amount: int):
         await self._ensure_connection()
@@ -501,7 +606,10 @@ class Database:
     async def set_title(self, guild_id: int, user_id: int, title_text: str):
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
-            await conn.execute("UPDATE economy SET title = $1 WHERE guild_id = $2 AND user_id = $3", title_text, guild_id, user_id)
+            await conn.execute("""
+                INSERT INTO economy (guild_id, user_id, title) VALUES ($2, $3, $1)
+                ON CONFLICT (guild_id, user_id) DO UPDATE SET title = EXCLUDED.title
+            """, title_text, guild_id, user_id)
 
     async def add_auto_response(self, guild_id: int, trigger: str, response: str):
         await self._ensure_connection()
@@ -510,16 +618,24 @@ class Database:
                 INSERT INTO auto_responses (guild_id, trigger_text, response_text) VALUES ($1, $2, $3)
                 ON CONFLICT (guild_id, trigger_text) DO UPDATE SET response_text = EXCLUDED.response_text
             """, guild_id, trigger.lower(), response)
+        self._autoresp_cache.pop(guild_id, None)
 
     async def get_auto_responses(self, guild_id: int):
+        hit = self._autoresp_cache.get(guild_id)
+        if hit and time.time() - hit[0] < AUTORESP_TTL:
+            return hit[1]
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
-            return await conn.fetch("SELECT trigger_text, response_text FROM auto_responses WHERE guild_id = $1", guild_id)
+            rows = list(await conn.fetch(
+                "SELECT trigger_text, response_text FROM auto_responses WHERE guild_id = $1", guild_id))
+        self._autoresp_cache[guild_id] = (time.time(), rows)
+        return rows
 
     async def delete_auto_response(self, guild_id: int, trigger: str):
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM auto_responses WHERE guild_id = $1 AND trigger_text = $2", guild_id, trigger.lower())
+        self._autoresp_cache.pop(guild_id, None)
 
     async def add_custom_alias(self, guild_id: int, alias: str, command_name: str):
         await self._ensure_connection()
@@ -528,6 +644,7 @@ class Database:
                 INSERT INTO custom_aliases (guild_id, alias, command_name) VALUES ($1, $2, $3)
                 ON CONFLICT (guild_id, alias) DO UPDATE SET command_name = EXCLUDED.command_name
             """, guild_id, alias.lower(), command_name.lower())
+        self._alias_cache.pop(guild_id, None)
 
     async def get_custom_aliases(self, guild_id: int):
         await self._ensure_connection()
@@ -538,12 +655,16 @@ class Database:
         await self._ensure_connection()
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM custom_aliases WHERE guild_id = $1 AND alias = $2", guild_id, alias.lower())
+        self._alias_cache.pop(guild_id, None)
 
     async def get_command_for_alias(self, guild_id: int, alias: str):
-        await self._ensure_connection()
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT command_name FROM custom_aliases WHERE guild_id = $1 AND alias = $2", guild_id, alias.lower())
-            return row['command_name'] if row else None
+        hit = self._alias_cache.get(guild_id)
+        if hit and time.time() - hit[0] < ALIAS_TTL:
+            return hit[1].get(alias.lower())
+        rows = await self.get_custom_aliases(guild_id)
+        mapping = {r['alias']: r['command_name'] for r in rows}
+        self._alias_cache[guild_id] = (time.time(), mapping)
+        return mapping.get(alias.lower())
 
     async def add_button_role(self, guild_id: int, button_label: str, role_id: int):
         await self._ensure_connection()
@@ -647,3 +768,32 @@ async def check_and_grant_level_roles(guild: discord.Guild, member: discord.Memb
                     await member.add_roles(role, reason="رتبة مكافأة اللفل")
                 except Exception:
                     pass
+
+
+# ─────────────── أدوات الرد على التفاعلات (تعمل سواء تم الرد/الـdefer أو لا) ───────────────
+async def reply(interaction: discord.Interaction, content=None, **kwargs):
+    """بديل آمن لـ interaction.response.send_message: يتحول تلقائياً لـ followup إذا انتهت فرصة الرد الأول."""
+    if interaction.response.is_done():
+        return await interaction.followup.send(content, **kwargs)
+    try:
+        return await interaction.response.send_message(content, **kwargs)
+    except discord.InteractionResponded:
+        return await interaction.followup.send(content, **kwargs)
+    except discord.HTTPException as e:
+        if e.code != 40060:  # Interaction has already been acknowledged
+            raise
+        return await interaction.followup.send(content, **kwargs)
+
+
+async def edit_reply(interaction: discord.Interaction, **kwargs):
+    """بديل آمن لـ interaction.response.edit_message."""
+    if interaction.response.is_done():
+        return await interaction.edit_original_response(**kwargs)
+    try:
+        return await interaction.response.edit_message(**kwargs)
+    except discord.InteractionResponded:
+        return await interaction.edit_original_response(**kwargs)
+    except discord.HTTPException as e:
+        if e.code != 40060:
+            raise
+        return await interaction.edit_original_response(**kwargs)
