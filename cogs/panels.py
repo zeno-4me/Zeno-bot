@@ -491,7 +491,10 @@ async def show_home(interaction: discord.Interaction, new: bool = False):
         else:
             await interaction.response.send_message(embed=emb, view=view, ephemeral=True)
     else:
-        await interaction.response.edit_message(content=None, embeds=[emb], view=view)
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=None, embeds=[emb], view=view)
+        else:
+            await interaction.response.edit_message(content=None, embeds=[emb], view=view)
 
 
 async def open_panels_home(interaction: discord.Interaction):
@@ -616,6 +619,7 @@ class PanelEditorView(OwnedView):
     def __init__(self, owner_id: int, panel: dict):
         super().__init__(owner_id)
         self.panel_id = panel["id"]
+        self.panel = panel
         self.toggle_ts.label = f"🕒 التوقيت: {'✅' if panel['config'].get('show_timestamp') else '❌'}"
         if panel["ptype"] == "ticket":
             b = discord.ui.Button(label="🎫 إعدادات التذكرة", style=discord.ButtonStyle.primary, row=1)
@@ -628,21 +632,15 @@ class PanelEditorView(OwnedView):
 
     @discord.ui.button(label="📝 الأساسيات", style=discord.ButtonStyle.primary, row=0)
     async def basics(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        panel = await load_panel(self.panel_id, interaction.guild_id)
-        await interaction.followup.send_modal(BasicsModal(panel))
+        await interaction.response.send_modal(BasicsModal(self.panel))
 
     @discord.ui.button(label="👤 المؤلف والفوتر", style=discord.ButtonStyle.secondary, row=0)
     async def author_footer(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        panel = await load_panel(self.panel_id, interaction.guild_id)
-        await interaction.followup.send_modal(AuthorFooterModal(panel))
+        await interaction.response.send_modal(AuthorFooterModal(self.panel))
 
     @discord.ui.button(label="🖼️ الصور", style=discord.ButtonStyle.secondary, row=0)
     async def images(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        panel = await load_panel(self.panel_id, interaction.guild_id)
-        await interaction.followup.send_modal(ImagesModal(panel))
+        await interaction.response.send_modal(ImagesModal(self.panel))
 
     @discord.ui.button(label="🧾 الحقول", style=discord.ButtonStyle.secondary, row=0)
     async def fields(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -889,6 +887,7 @@ async def show_fields(interaction: discord.Interaction, panel_id: int):
 class FieldsView(BackToEditorView):
     def __init__(self, owner_id: int, panel: dict):
         super().__init__(owner_id, panel["id"])
+        self.panel = panel
         fields = panel["embed"].get("fields", [])
         if fields:
             choices = {str(i): f"{i + 1}. {f['name']}"[:100] for i, f in enumerate(fields)}
@@ -896,17 +895,13 @@ class FieldsView(BackToEditorView):
         self.n = len(fields)
 
     async def on_pick(self, interaction: discord.Interaction, idx: str):
-        await interaction.response.defer(ephemeral=True)
-        panel = await load_panel(self.panel_id, interaction.guild_id)
-        await interaction.followup.send_modal(FieldModal(panel, int(idx)))
+        await interaction.response.send_modal(FieldModal(self.panel, int(idx)))
 
     @discord.ui.button(label="➕ إضافة حقل", style=discord.ButtonStyle.success, row=1)
     async def add(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
         if self.n >= 25:
-            return await interaction.followup.send("❌ وصلت للحد الأقصى (25 حقل).", ephemeral=True)
-        panel = await load_panel(self.panel_id, interaction.guild_id)
-        await interaction.followup.send_modal(FieldModal(panel, None))
+            return await interaction.response.send_message("❌ وصلت للحد الأقصى (25 حقل).", ephemeral=True)
+        await interaction.response.send_modal(FieldModal(self.panel, None))
 
 
 class FieldModal(discord.ui.Modal, title="حقل الإمبد"):
@@ -993,6 +988,7 @@ class TicketSettingsView(OwnedView):
     def __init__(self, owner_id: int, panel: dict):
         super().__init__(owner_id)
         self.panel_id = pid = panel["id"]
+        self.panel = panel
         self.add_item(CfgChannelSelect(pid, "category_id", "📁 كاتيجوري التذاكر", [discord.ChannelType.category], 0))
         self.add_item(CfgChannelSelect(pid, "log_channel_id", "📜 قناة سجل التذاكر", [discord.ChannelType.text], 1))
         self.add_item(SupportRolesSelect(pid))
@@ -1008,15 +1004,11 @@ class TicketSettingsView(OwnedView):
 
     @discord.ui.button(label="🔘 نص/إيموجي الزر", style=discord.ButtonStyle.primary, row=4)
     async def btn_text(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        panel = await load_panel(self.panel_id, interaction.guild_id)
-        await interaction.followup.send_modal(TicketButtonModal(panel))
+        await interaction.response.send_modal(TicketButtonModal(self.panel))
 
     @discord.ui.button(label="💬 رسالة الترحيب", style=discord.ButtonStyle.primary, row=4)
     async def welcome(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        panel = await load_panel(self.panel_id, interaction.guild_id)
-        await interaction.followup.send_modal(TicketWelcomeModal(panel))
+        await interaction.response.send_modal(TicketWelcomeModal(self.panel))
 
     @discord.ui.button(label="⚙️ خيارات", style=discord.ButtonStyle.secondary, row=4)
     async def options(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1105,15 +1097,14 @@ class TicketOptionsView(OwnedView):
     def __init__(self, owner_id: int, panel: dict):
         super().__init__(owner_id)
         self.panel_id, c = panel["id"], panel["config"]
+        self.panel = panel
         self.add_item(ToggleButton(self.panel_id, "ask_reason", "سؤال السبب", c["ask_reason"]))
         self.add_item(ToggleButton(self.panel_id, "claim_enabled", "زر الاستلام", c["claim_enabled"]))
         self.add_item(ToggleButton(self.panel_id, "mention_support", "منشن الدعم", c["mention_support"]))
 
     @discord.ui.button(label="🔢 الحد وصيغة الاسم", style=discord.ButtonStyle.primary, row=1)
     async def limits(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        panel = await load_panel(self.panel_id, interaction.guild_id)
-        await interaction.followup.send_modal(TicketLimitsModal(panel))
+        await interaction.response.send_modal(TicketLimitsModal(self.panel))
 
     @discord.ui.button(label="◀ رجوع", style=discord.ButtonStyle.secondary, row=1)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1246,10 +1237,9 @@ class RoleDraftView(OwnedView):
 
     @discord.ui.button(label="💾 الاسم والإيموجي وحفظ", style=discord.ButtonStyle.success, row=3)
     async def save(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
         if not self.draft["role_id"]:
-            return await interaction.followup.send("❌ اختر الرتبة أولاً.", ephemeral=True)
-        await interaction.followup.send_modal(RoleButtonModal(self.panel_id, self.draft))
+            return await interaction.response.send_message("❌ اختر الرتبة أولاً.", ephemeral=True)
+        await interaction.response.send_modal(RoleButtonModal(self.panel_id, self.draft))
 
     @discord.ui.button(label="🗑️ حذف الزر", style=discord.ButtonStyle.danger, row=3)
     async def delete(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1309,6 +1299,7 @@ class Panels(commands.Cog):
     @app_commands.guild_only()
     @app_commands.checks.has_permissions(administrator=True)
     async def panels(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         await show_home(interaction, new=True)
 
 
