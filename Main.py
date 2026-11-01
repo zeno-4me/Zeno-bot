@@ -1,7 +1,6 @@
 import os
 import asyncio
 import traceback
-import random
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -41,12 +40,6 @@ class ZenoBot(commands.Bot):
             except Exception as e:
                 print(f"خطأ أثناء تهيئة قاعدة البيانات: {e}")
 
-        try:
-            from dashboard import CloseTicketView
-            self.add_view(CloseTicketView(0))
-        except Exception as e:
-            print(f"تعذر تسجيل Views التذاكر: {e}")
-
         cogs_dir = './cogs' if os.path.exists('./cogs') else '.'
         ignored_files = ['main.py', 'database.py']
         
@@ -61,6 +54,28 @@ class ZenoBot(commands.Bot):
                     traceback.print_exc()
 
 bot = ZenoBot(command_prefix="!", intents=intents)
+
+# ───── حارس الـ3 ثواني: إذا ما تم الرد خلال ثانيتين، يسوي defer تلقائياً (يعطيك 15 دقيقة) ─────
+AUTO_DEFER_AFTER = 2.0
+_bg_tasks = set()
+
+async def _auto_defer(interaction: discord.Interaction):
+    await asyncio.sleep(AUTO_DEFER_AFTER)
+    if interaction.response.is_done():
+        return
+    try:
+        await interaction.response.defer()
+    except discord.HTTPException:
+        pass
+
+@bot.listen('on_interaction')
+async def auto_defer_watchdog(interaction: discord.Interaction):
+    if interaction.type in (discord.InteractionType.application_command,
+                            discord.InteractionType.component,
+                            discord.InteractionType.modal_submit):
+        task = asyncio.create_task(_auto_defer(interaction))
+        _bg_tasks.add(task)
+        task.add_done_callback(_bg_tasks.discard)
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -77,33 +92,13 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         pass
 
 @bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot or not message.guild:
-        return
-
-    try:
-        responses = await db.get_auto_responses(message.guild.id)
-        if responses:
-            msg_content = message.content.strip().lower()
-            for r in responses:
-                trigger = r['trigger_text'].strip().lower()
-                if trigger == msg_content or trigger in msg_content:
-                    raw_text = r['response_text']
-                    replies_list = [item.strip() for item in raw_text.split("|") if item.strip()]
-                    if replies_list:
-                        chosen = random.choice(replies_list)
-                        await message.channel.send(chosen)
-                        return
-    except Exception as e:
-        print(f"خطأ في الرد التلقائي: {e}")
-
-    await bot.process_commands(message)
-
-@bot.event
 async def on_ready():
     print(f"تم تسجيل الدخول باسم: {bot.user.name}")
+    if getattr(bot, "_commands_synced", False):
+        return  # on_ready قد يتكرر مع كل إعادة اتصال، المزامنة تكفي مرة وحدة
     try:
         synced = await bot.tree.sync()
+        bot._commands_synced = True
         print(f"تم مزامنة {len(synced)} أمر سلاش!")
     except Exception as e:
         print(f"فشل المزامنة: {e}")
