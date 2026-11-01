@@ -3,7 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from typing import Optional, Literal
-from database import db, calculate_next_level_xp, create_progress_bar, check_and_grant_level_roles
+from database import db, calculate_next_level_xp, create_progress_bar, check_and_grant_level_roles, reply, edit_reply
 
 class RankTimeframeSelect(discord.ui.Select):
     def __init__(self, target_member: discord.Member):
@@ -57,7 +57,7 @@ class RankInfoView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
-            await interaction.response.send_message("❌ هذه القائمة ليست لك!", ephemeral=True)
+            await reply(interaction, "❌ هذه القائمة ليست لك!", ephemeral=True)
             return False
         return True
 
@@ -70,11 +70,11 @@ class RankMainView(discord.ui.View):
     @discord.ui.button(label="المعلومات التفصيلية", style=discord.ButtonStyle.secondary, emoji="ℹ️")
     async def show_info(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.author_id:
-            await interaction.response.send_message("❌ أنت لست صاحب الطلب!", ephemeral=True)
+            await reply(interaction, "❌ أنت لست صاحب الطلب!", ephemeral=True)
             return
             
         view = RankInfoView(self.target_member, self.author_id)
-        await interaction.response.edit_message(view=view)
+        await edit_reply(interaction, view=view)
 
 class Leveling(commands.Cog):
     def __init__(self, bot):
@@ -87,26 +87,38 @@ class Leveling(commands.Cog):
     @tasks.loop(minutes=1)
     async def voice_xp_loop(self):
         for guild in self.bot.guilds:
-            st = await db.get_guild_settings(guild.id)
-            if not st or not st['voice_xp_enabled']:
-                continue
-            v_rate = st['voice_xp_rate'] if st['voice_xp_rate'] is not None else 10
-            for channel in guild.voice_channels:
-                if channel == guild.afk_channel:
+            try:
+                st = await db.get_guild_settings(guild.id)
+                if not st or not st['voice_xp_enabled']:
                     continue
-                for member in channel.members:
-                    if member.bot or member.voice.self_deaf or member.voice.self_mute:
+                v_rate = st['voice_xp_rate'] if st['voice_xp_rate'] is not None else 10
+                for channel in guild.voice_channels:
+                    if channel == guild.afk_channel:
                         continue
-                    
-                    leveled_up, new_main_lvl = await db.add_voice_xp(guild.id, member.id, v_rate, time_add=60)
-                    await db.log_activity(guild.id, member.id, 'voice_xp', v_rate)
-                    
-                    if leveled_up:
-                        await check_and_grant_level_roles(guild, member, new_main_lvl)
-                        lvl_c_id = st['level_up_channel_id']
-                        target_c = guild.get_channel(lvl_c_id) if lvl_c_id else None
-                        if target_c:
-                            await target_c.send(f"🎉 مبروك {member.mention}! ارتفع مستواك الأساسي إلى **المستوى {new_main_lvl}**!")
+                    for member in channel.members:
+                        if member.bot or member.voice.self_deaf or member.voice.self_mute:
+                            continue
+                        try:
+                            await self._award_voice_xp(guild, member, st, v_rate)
+                        except Exception as e:
+                            print(f"⚠️ خطأ في خبرة الصوت للعضو {member.id}: {e}")
+            except Exception as e:
+                print(f"⚠️ خطأ في حلقة الخبرة الصوتية للسيرفر {guild.id}: {e}")
+
+    @voice_xp_loop.before_loop
+    async def _before_voice_xp_loop(self):
+        await self.bot.wait_until_ready()
+
+    async def _award_voice_xp(self, guild, member, st, v_rate):
+        leveled_up, new_main_lvl = await db.add_voice_xp(guild.id, member.id, v_rate, time_add=60)
+        await db.log_activity(guild.id, member.id, 'voice_xp', v_rate)
+
+        if leveled_up:
+            await check_and_grant_level_roles(guild, member, new_main_lvl)
+            lvl_c_id = st['level_up_channel_id']
+            target_c = guild.get_channel(lvl_c_id) if lvl_c_id else None
+            if target_c:
+                await target_c.send(f"🎉 مبروك {member.mention}! ارتفع مستواك الأساسي إلى **المستوى {new_main_lvl}**!")
 
     @app_commands.command(name="rank", description="عرض المستوى الأساسي والتفصيلي لحسابك")
     async def rank(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
@@ -132,7 +144,7 @@ class Leveling(commands.Cog):
         embed.add_field(name="🎤 اللفل الصوتي (Voice XP)", value=f"Level `{voice_lvl}` ({voice_xp:,} XP)", inline=True)
         
         view = RankMainView(target_member=target, author_id=interaction.user.id)
-        await interaction.response.send_message(embed=embed, view=view)
+        await reply(interaction, embed=embed, view=view)
 
     @app_commands.command(name="top", description="عرض قائمة المتصدرين بالسيرفر باللفل أو الكريدت")
     async def top(self, interaction: discord.Interaction, category: Literal["المستويات (XP)", "الكريدت (Credits)"]):
@@ -155,7 +167,7 @@ class Leveling(commands.Cog):
                 desc += f"**#{idx}** | {m.mention if m else 'عضو'} - **${r['credits']:,}** كريدت\n"
             embed.description = desc if desc else "لا توجد بيانات متاحة."
 
-        await interaction.response.send_message(embed=embed)
+        await reply(interaction, embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Leveling(bot))
