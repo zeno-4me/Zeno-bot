@@ -3,7 +3,7 @@ from typing import Optional
 import discord
 from discord import app_commands
 from discord.ext import commands
-from database import db
+from database import db, reply
 
 class Economy(commands.Cog):
     def __init__(self, bot):
@@ -13,51 +13,45 @@ class Economy(commands.Cog):
     async def credits(self, interaction: discord.Interaction, member: Optional[discord.Member] = None, amount: Optional[int] = None):
         if member and amount is not None:
             if member.id == interaction.user.id:
-                await interaction.response.send_message("❌ لا يمكنك تحويل الكريدت لنفسك!", ephemeral=True)
+                await reply(interaction, "❌ لا يمكنك تحويل الكريدت لنفسك!", ephemeral=True)
                 return
             if member.bot:
-                await interaction.response.send_message("❌ لا يمكنك تحويل الكريدت للبوتات!", ephemeral=True)
+                await reply(interaction, "❌ لا يمكنك تحويل الكريدت للبوتات!", ephemeral=True)
                 return
             if amount <= 0:
-                await interaction.response.send_message("❌ يرجى إدخال مبلغ صحيح للتحويل!", ephemeral=True)
+                await reply(interaction, "❌ يرجى إدخال مبلغ صحيح للتحويل!", ephemeral=True)
                 return
 
-            sender_data = await db.get_economy_data(interaction.guild_id, interaction.user.id)
-            current_credits = sender_data['credits'] if sender_data else 0
-
-            if current_credits < amount:
-                await interaction.response.send_message("❌ رصيدك الحالي لا يكفي لإجراء هذا التحويل!", ephemeral=True)
+            if amount > 2_000_000_000:
+                await reply(interaction, "❌ المبلغ كبير جداً!", ephemeral=True)
                 return
 
-            await db.update_credits(interaction.guild_id, interaction.user.id, -amount)
-            await db.update_credits(interaction.guild_id, member.id, amount)
-            await interaction.response.send_message(f"💸 قام {interaction.user.mention} بتحويل **${amount:,}** كريدت إلى {member.mention}!")
+            ok, _ = await db.transfer_credits(interaction.guild_id, interaction.user.id, member.id, amount)
+            if not ok:
+                await reply(interaction, "❌ رصيدك الحالي لا يكفي لإجراء هذا التحويل!", ephemeral=True)
+                return
+
+            await reply(interaction, f"💸 قام {interaction.user.mention} بتحويل **${amount:,}** كريدت إلى {member.mention}!")
         else:
             target = member or interaction.user
             data = await db.get_economy_data(interaction.guild_id, target.id)
             user_credits = data['credits'] if data else 0
-            await interaction.response.send_message(f"💳 رصيد {target.mention} الحالي هو: **${user_credits:,}** كريدت.")
+            await reply(interaction, f"💳 رصيد {target.mention} الحالي هو: **${user_credits:,}** كريدت.")
 
     @app_commands.command(name="daily", description="استلام المكافأة اليومية المجانية من الكريدت")
     async def daily(self, interaction: discord.Interaction):
-        data = await db.get_economy_data(interaction.guild_id, interaction.user.id)
-        last_daily = data['last_daily'] if data else 0
-        cooldown = 86400
-        now = time.time()
-
-        if now - last_daily < cooldown:
-            remaining = int(cooldown - (now - last_daily))
+        reward = 300
+        ok, remaining = await db.claim_daily(interaction.guild_id, interaction.user.id, reward, 86400)
+        if not ok:
             hours, remainder = divmod(remaining, 3600)
             minutes, seconds = divmod(remainder, 60)
-            await interaction.response.send_message(
+            await reply(interaction, 
                 f"⏳ لقد استلمت مكافأتك اليومية بالفعل! يرجى الانتظار `{hours}h {minutes}m {seconds}s` مجدداً.",
                 ephemeral=True
             )
             return
 
-        reward = 300
-        await db.set_daily_claimed(interaction.guild_id, interaction.user.id, reward)
-        await interaction.response.send_message(f"🎉 مبارك! لقد حصلت على **${reward:,}** كريدت كمكافأة يومية!")
+        await reply(interaction, f"🎉 مبارك! لقد حصلت على **${reward:,}** كريدت كمكافأة يومية!")
 
     @app_commands.command(name="profile", description="عرض بطاقة بروفايلك الشاملة (الرصيد، اللقب، السمعة، واللفل)")
     async def profile(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
@@ -80,42 +74,36 @@ class Economy(commands.Cog):
         embed.add_field(name="⭐ السمعة (Rep)", value=f"**+{rep_val}**", inline=True)
         embed.add_field(name="📊 المستوى الكلي", value=f"**Level {unified_level}**", inline=True)
 
-        await interaction.response.send_message(embed=embed)
+        await reply(interaction, embed=embed)
 
     @app_commands.command(name="rep", description="إعطاء نقطة سمعة لشخص آخر (تتاح كل 12 ساعة)")
     async def rep(self, interaction: discord.Interaction, member: discord.Member):
         if member.id == interaction.user.id:
-            await interaction.response.send_message("❌ لا يمكنك إعطاء نقطة سمعة لنفسك!", ephemeral=True)
+            await reply(interaction, "❌ لا يمكنك إعطاء نقطة سمعة لنفسك!", ephemeral=True)
             return
         if member.bot:
-            await interaction.response.send_message("❌ لا يمكنك إعطاء نقاط سمعة للبوتات!", ephemeral=True)
+            await reply(interaction, "❌ لا يمكنك إعطاء نقاط سمعة للبوتات!", ephemeral=True)
             return
 
-        sender_eco = await db.get_economy_data(interaction.guild_id, interaction.user.id)
-        last_rep = sender_eco['last_rep'] if sender_eco else 0
-        cooldown = 43200
-        now = time.time()
-
-        if now - last_rep < cooldown:
-            remaining = int(cooldown - (now - last_rep))
+        ok, remaining = await db.claim_rep(interaction.guild_id, interaction.user.id, member.id, 43200)
+        if not ok:
             hours, remainder = divmod(remaining, 3600)
             minutes, seconds = divmod(remainder, 60)
-            await interaction.response.send_message(
+            await reply(interaction, 
                 f"⏳ يمكنك إعطاء نقطة سمعة مجدداً بعد `{hours}h {minutes}m {seconds}s`.",
                 ephemeral=True
             )
             return
 
-        await db.add_rep(interaction.guild_id, member.id, interaction.user.id)
-        await interaction.response.send_message(f"🌟 قام {interaction.user.mention} بإعطاء نقطة سمعة (+1 Rep) إلى {member.mention}!")
+        await reply(interaction, f"🌟 قام {interaction.user.mention} بإعطاء نقطة سمعة (+1 Rep) إلى {member.mention}!")
 
     @app_commands.command(name="title", description="كتابة وتغيير اللقب الذي يظهر في بروفايلك")
     async def title(self, interaction: discord.Interaction, text: str):
         if len(text) > 30:
-            await interaction.response.send_message("❌ اللقب يتجاوز الحد المسموح (30 حرف)!", ephemeral=True)
+            await reply(interaction, "❌ اللقب يتجاوز الحد المسموح (30 حرف)!", ephemeral=True)
             return
         await db.set_title(interaction.guild_id, interaction.user.id, text)
-        await interaction.response.send_message(f"✅ تم تحديث لقبك الشخصي إلى: **{text}**")
+        await reply(interaction, f"✅ تم تحديث لقبك الشخصي إلى: **{text}**")
 
 async def setup(bot):
     await bot.add_cog(Economy(bot))
