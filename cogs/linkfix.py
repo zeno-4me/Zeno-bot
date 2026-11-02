@@ -23,23 +23,22 @@ except Exception:
 
 # ───────────── إعدادات ─────────────
 MAX_LINKS_PER_MESSAGE = 2            # أقصى عدد روابط يتحول من رسالة وحدة
-MAX_DURATION = 180                   # ثواني (أطول من كذا يتجاهله)
 MAX_DOWNLOAD_BYTES = 150 * 1024 * 1024
-DOWNLOAD_TIMEOUT = 90                # ثواني
+DOWNLOAD_TIMEOUT = 120               # ثواني
 COMPRESS_TIMEOUT = 150               # ثواني
 USER_COOLDOWN = 4                    # ثواني بين كل رسالة وأخرى لنفس العضو
 MAX_PARALLEL = 2                     # عدد التحميلات المتزامنة
 
-# المنصات المدعومة (روابط الفيديو القصير فقط، مو فيديوهات يوتيوب الطويلة)
+# المنصات المدعومة: (مفتاح المنصة، النمط). روابط الفيديو القصير فقط، مو فيديوهات يوتيوب الطويلة
 SUPPORTED = [
-    re.compile(r"^https?://(?:www\.|m\.)?youtube\.com/shorts/[\w-]+", re.I),
-    re.compile(r"^https?://(?:www\.|m\.|vm\.|vt\.)?tiktok\.com/\S+", re.I),
-    re.compile(r"^https?://(?:www\.)?instagram\.com/(?:[\w.]+/)?(?:reels?|p|tv)/[\w-]+", re.I),
-    re.compile(r"^https?://(?:www\.)?snapchat\.com/(?:spotlight|t)/\S+", re.I),
-    re.compile(r"^https?://story\.snapchat\.com/\S+", re.I),
-    re.compile(r"^https?://(?:www\.|mobile\.)?(?:x|twitter)\.com/\w+/status/\d+", re.I),
-    re.compile(r"^https?://(?:www\.|m\.|web\.)?facebook\.com/(?:reel/|watch/?\?|[\w.]+/videos/)\S*", re.I),
-    re.compile(r"^https?://fb\.watch/\S+", re.I),
+    ("youtube", re.compile(r"^https?://(?:www\.|m\.)?youtube\.com/shorts/[\w-]+", re.I)),
+    ("tiktok", re.compile(r"^https?://(?:www\.|m\.|vm\.|vt\.)?tiktok\.com/\S+", re.I)),
+    ("instagram", re.compile(r"^https?://(?:www\.)?instagram\.com/(?:[\w.]+/)?(?:reels?|p|tv)/[\w-]+", re.I)),
+    ("snapchat", re.compile(r"^https?://(?:www\.)?snapchat\.com/(?:spotlight|t)/\S+", re.I)),
+    ("snapchat", re.compile(r"^https?://story\.snapchat\.com/\S+", re.I)),
+    ("x", re.compile(r"^https?://(?:www\.|mobile\.)?(?:x|twitter)\.com/\w+/status/\d+", re.I)),
+    ("facebook", re.compile(r"^https?://(?:www\.|m\.|web\.)?facebook\.com/(?:reel/|watch/?\?|[\w.]+/videos/)\S*", re.I)),
+    ("facebook", re.compile(r"^https?://fb\.watch/\S+", re.I)),
 ]
 
 # (?<!<) يتجاهل الروابط اللي بين < > (العضو قصد يخفي المعاينة)
@@ -55,11 +54,51 @@ YTDLP_FORMAT = (
 )
 
 
+def match_platform(url: str):
+    for key, pattern in SUPPORTED:
+        if pattern.match(url):
+            return key
+    return None
+
+
+def _hits(ids: set, selected) -> bool:
+    return bool(ids & set(selected or []))
+
+
 class LinkFix(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self._sem = asyncio.Semaphore(MAX_PARALLEL)
         self._cooldown = {}
+
+    # ───────────── فلاتر القنوات والرتب ─────────────
+    @staticmethod
+    def _channel_allowed(message: discord.Message, cfg: dict) -> bool:
+        mode = cfg.get("channel_mode", "all")
+        if mode not in ("include", "exclude"):
+            return True
+        ch = message.channel
+        ids = {ch.id}
+        parent_id = getattr(ch, "parent_id", None)          # ثريد/بوست فورم
+        if parent_id:
+            ids.add(parent_id)
+        cat_id = getattr(ch, "category_id", None)
+        if cat_id:
+            ids.add(cat_id)
+        parent = getattr(ch, "parent", None)
+        if parent is not None and getattr(parent, "category_id", None):
+            ids.add(parent.category_id)
+        hit = _hits(ids, cfg.get("channels"))
+        return hit if mode == "include" else not hit
+
+    @staticmethod
+    def _member_allowed(message: discord.Message, cfg: dict) -> bool:
+        mode = cfg.get("role_mode", "all")
+        if mode not in ("include", "exclude"):
+            return True
+        role_ids = {r.id for r in getattr(message.author, "roles", [])}
+        hit = _hits(role_ids, cfg.get("roles"))
+        return hit if mode == "include" else not hit
 
     # ───────────── الاستماع للرسائل ─────────────
     @commands.Cog.listener()
@@ -69,14 +108,15 @@ class LinkFix(commands.Cog):
         if yt_dlp is None:
             return
 
-        urls = []
+        # اللي فيه رابط مدعوم أصلاً؟ (فحص سريع قبل أي استعلام قاعدة بيانات)
+        found = []
         for m in URL_RE.finditer(message.content):
             u = m.group(0).rstrip(".,!?)]}'\"")
-            if u not in urls and any(p.match(u) for p in SUPPORTED):
-                urls.append(u)
-        if not urls:
+            key = match_platform(u)
+            if key and all(u != f[0] for f in found):
+                found.append((u, key))
+        if not found:
             return
-        urls = urls[:MAX_LINKS_PER_MESSAGE]
 
         settings = await db.get_guild_settings(message.guild.id)
         enabled = settings.get('link_embed_enabled')
@@ -87,9 +127,26 @@ class LinkFix(commands.Cog):
                 and not message.author.guild_permissions.manage_messages):
             return
 
+        cfg = await db.get_link_config(message.guild.id)
+        if not self._channel_allowed(message, cfg) or not self._member_allowed(message, cfg):
+            return
+
+        platforms = cfg.get("platforms", {})
+        all_urls = [u for u, key in found if platforms.get(key, True)]
+        if not all_urls:
+            return
+        urls = all_urls[:MAX_LINKS_PER_MESSAGE]
+
         perms = message.channel.permissions_for(message.guild.me)
         if not (perms.send_messages and perms.attach_files):
             return
+
+        # الوضع الفعلي: ما نحذف إلا إذا عندنا صلاحية، وكل الروابط بنحولها
+        mode = cfg.get("mode", "keep")
+        if mode == "delete" and not (perms.manage_messages and len(urls) == len(all_urls)):
+            mode = "keep"
+        if mode == "suppress" and not perms.manage_messages:
+            mode = "keep"
 
         now = time.monotonic()
         if now - self._cooldown.get(message.author.id, 0) < USER_COOLDOWN:
@@ -98,38 +155,63 @@ class LinkFix(commands.Cog):
         if len(self._cooldown) > 1000:
             self._cooldown = {k: v for k, v in self._cooldown.items() if now - v < USER_COOLDOWN}
 
+        max_duration = int(cfg.get("max_duration") or 180)
+        caption = None
+        if mode == "delete":
+            rest = message.content
+            for u in urls:
+                rest = rest.replace(u, "")
+            rest = rest.strip()[:500]
+            caption = f"🎬 {message.author.mention}" + (f"\n{rest}" if rest else "")
+
         try:
             await message.add_reaction("⏳")
         except discord.HTTPException:
             pass
+
+        results = []
         try:
-            for url in urls:
-                await self._process(message, url)
+            for i, url in enumerate(urls):
+                ok = await self._process(message, url, max_duration,
+                                         use_reply=(mode != "delete"),
+                                         content=caption if i == 0 else None)
+                results.append(ok)
         finally:
             try:
                 await message.remove_reaction("⏳", self.bot.user)
             except discord.HTTPException:
                 pass
 
+        try:
+            if mode == "delete" and results and all(results):
+                await message.delete()
+            elif mode == "suppress" and any(results):
+                await message.edit(suppress=True)
+        except discord.HTTPException:
+            pass
+
     # ───────────── المعالجة ─────────────
-    async def _process(self, message: discord.Message, url: str):
+    async def _process(self, message: discord.Message, url: str, max_duration: int,
+                       use_reply: bool, content=None) -> bool:
+        """يرجع True إذا انرسل الفيديو."""
         limit = max(message.guild.filesize_limit - 300_000, 1_000_000)
         async with self._sem:
             tmp = tempfile.mkdtemp(prefix="linkfix_")
             try:
                 path, info = await asyncio.wait_for(
-                    asyncio.to_thread(self._download, url, tmp), timeout=DOWNLOAD_TIMEOUT)
+                    asyncio.to_thread(self._download, url, tmp, max_duration), timeout=DOWNLOAD_TIMEOUT)
                 if not path:
-                    return
+                    return False
 
                 if os.path.getsize(path) > limit:
                     path = await self._compress(path, info.get("duration"), limit, tmp)
                     if not path or os.path.getsize(path) > limit:
-                        await self._safe_send(message, content="❌ الفيديو كبير وما قدرت أصغّره لحجم يناسب السيرفر.",
-                                              delete_after=8)
-                        return
+                        await self._send(message, True, content="❌ الفيديو كبير وما قدرت أصغّره لحجم يناسب السيرفر.",
+                                         delete_after=8)
+                        return False
 
-                await self._safe_send(message, file=discord.File(path, filename=os.path.basename(path)))
+                await self._send(message, use_reply, path=path, content=content)
+                return True
             except asyncio.TimeoutError:
                 print(f"[linkfix] انتهت مهلة التحميل: {url}")
             except Exception as e:
@@ -137,21 +219,29 @@ class LinkFix(commands.Cog):
                 print(f"[linkfix] فشل تحويل {url}: {type(e).__name__}: {e}")
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
+        return False
 
-    async def _safe_send(self, message: discord.Message, **kwargs):
-        try:
-            await message.reply(mention_author=False, **kwargs)
-        except discord.HTTPException:
-            # الرسالة الأصلية انحذفت أو ما نقدر نرد عليها
-            if "file" in kwargs:
-                kwargs["file"].reset()
+    async def _send(self, message: discord.Message, use_reply: bool, path=None, **kwargs):
+        """يرسل الرسالة (رد أو رسالة عادية). الملف يتنشأ من جديد في كل محاولة لأن ديسكورد يغلقه بعد الإرسال."""
+        def build():
+            kw = dict(kwargs)
+            if path:
+                kw["file"] = discord.File(path, filename=os.path.basename(path))
+            return kw
+
+        if use_reply:
             try:
-                await message.channel.send(**kwargs)
-            except discord.HTTPException as e:
-                print(f"[linkfix] فشل الإرسال: {e}")
+                await message.reply(mention_author=False, **build())
+                return
+            except discord.HTTPException:
+                pass  # الرسالة الأصلية انحذفت؟ نرسل عادي
+        try:
+            await message.channel.send(allowed_mentions=discord.AllowedMentions.none(), **build())
+        except discord.HTTPException as e:
+            raise
 
     # ───────────── التحميل (يشتغل في thread) ─────────────
-    def _download(self, url: str, tmp: str):
+    def _download(self, url: str, tmp: str, max_duration: int):
         opts = {
             "outtmpl": os.path.join(tmp, "%(id)s.%(ext)s"),
             "format": YTDLP_FORMAT,
@@ -162,7 +252,7 @@ class LinkFix(commands.Cog):
             "socket_timeout": 15,
             "retries": 2,
             "max_filesize": MAX_DOWNLOAD_BYTES,
-            "match_filter": yt_dlp.utils.match_filter_func(f"duration <=? {MAX_DURATION}"),
+            "match_filter": yt_dlp.utils.match_filter_func(f"duration <=? {max_duration}"),
         }
         if FFMPEG:
             opts["ffmpeg_location"] = FFMPEG
