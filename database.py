@@ -8,6 +8,24 @@ import discord
 import os
 import json
 
+LINK_PLATFORMS = {
+    "youtube": "يوتيوب شورتس",
+    "tiktok": "تيك توك",
+    "instagram": "ريلز انستغرام",
+    "snapchat": "سناب شات",
+    "x": "تويتر / X",
+    "facebook": "فيسبوك",
+}
+DEFAULT_LINK_CONFIG = {
+    "mode": "keep",            # keep = يبقى الرابط + الفيديو كرد | suppress = يبقى ويخفي المعاينة | delete = يحذف الرابط ويرسل الفيديو
+    "channel_mode": "all",     # all | include | exclude
+    "channels": [],
+    "role_mode": "all",        # all | include | exclude
+    "roles": [],
+    "platforms": {k: True for k in LINK_PLATFORMS},
+    "max_duration": 180,       # ثواني
+}
+
 SETTINGS_TTL = 60     # ثانية
 AUTORESP_TTL = 120
 ALIAS_TTL = 120
@@ -72,7 +90,8 @@ class Database:
                     anti_links INT DEFAULT 0,
                     anti_invites INT DEFAULT 0,
                     anti_spam INT DEFAULT 0,
-                    link_embed_enabled INT DEFAULT 1
+                    link_embed_enabled INT DEFAULT 1,
+                    link_embed_config TEXT DEFAULT '{}'
                 );
 
                 CREATE TABLE IF NOT EXISTS level_rewards (
@@ -183,6 +202,7 @@ class Database:
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS anti_invites INT DEFAULT 0;",
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS anti_spam INT DEFAULT 0;",
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS link_embed_enabled INT DEFAULT 1;",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS link_embed_config TEXT DEFAULT '{}';",
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS ticket_support_role_ids TEXT DEFAULT '[]';",
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS custom_embeds TEXT DEFAULT '{}';",
                 "CREATE INDEX IF NOT EXISTS idx_activity_lookup ON activity_log (guild_id, user_id, timestamp);",
@@ -220,6 +240,12 @@ class Database:
         except Exception:
             res['custom_embeds'] = {}
 
+        try:
+            if isinstance(res.get('link_embed_config'), str):
+                res['link_embed_config'] = json.loads(res['link_embed_config'] or '{}')
+        except Exception:
+            res['link_embed_config'] = {}
+
         self._settings_cache[guild_id] = (time.time(), res)
         return dict(res)
 
@@ -231,6 +257,22 @@ class Database:
         async with self.pool.acquire() as conn:
             await conn.execute(f"UPDATE guild_settings SET {column} = $1 WHERE guild_id = $2", value, guild_id)
         self._settings_cache.pop(guild_id, None)
+
+    async def get_link_config(self, guild_id: int) -> dict:
+        """إعدادات ميزة تحويل روابط السوشل لفيديو (مدموجة مع القيم الافتراضية)."""
+        st = await self.get_guild_settings(guild_id)
+        raw = st.get('link_embed_config')
+        cfg = copy.deepcopy(DEFAULT_LINK_CONFIG)
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                if k == "platforms" and isinstance(v, dict):
+                    cfg["platforms"].update({pk: bool(pv) for pk, pv in v.items() if pk in LINK_PLATFORMS})
+                elif k in cfg and k != "platforms":
+                    cfg[k] = v
+        return cfg
+
+    async def set_link_config(self, guild_id: int, cfg: dict):
+        await self.update_guild_setting(guild_id, "link_embed_config", cfg)
 
     # --- دوال نظام اللوحات (Panels) والتذاكر المفقودة سابقاً ---
     async def get_panels(self, guild_id: int):
