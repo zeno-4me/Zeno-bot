@@ -5,7 +5,7 @@ import re
 import discord
 from discord import app_commands
 from discord.ext import commands
-from database import db, reply, edit_reply
+from database import db, reply, edit_reply, LINK_PLATFORMS
 
 # دالة مساعدة لاستخراج آيدي القناة وآيدي الرسالة من رابط الرسالة (Message URL)
 def parse_discord_message_url(url: str):
@@ -255,6 +255,232 @@ class GeneralSettingsView(discord.ui.View):
         embed = discord.Embed(title="⚙️ لوحة تحكم السيرفر الشاملة", description="اختر القسم المراد التحكم به او تعديله!", color=discord.Color.blurple())
         await edit_reply(interaction, embed=embed, view=MainDashboardView())
 
+def build_automod_embed(st: dict):
+    embed = discord.Embed(title="🛡️ إعدادات الحماية والتعديل الآلي", color=discord.Color.red())
+    embed.add_field(name="الحماية العامة", value="✅ مفعلة" if st['automod_enabled'] else "❌ معطلة", inline=True)
+    embed.add_field(name="منع الروابط", value="✅ مفعل" if st['anti_links'] else "❌ معطل", inline=True)
+    embed.add_field(name="منع الدعوات", value="✅ مفعل" if st['anti_invites'] else "❌ معطل", inline=True)
+    embed.add_field(name="تحويل روابط السوشل لفيديو", value="❌ معطل" if st.get('link_embed_enabled') == 0 else "✅ مفعل", inline=True)
+    embed.add_field(name="الكلمات الممنوعة", value=st['automod_badwords'] if st['automod_badwords'] else "لا توجد كلمات ممنوعة", inline=False)
+    return embed
+
+
+# ───────────────── لوحة تحويل روابط السوشل ميديا لفيديو ─────────────────
+LINK_MODE_ORDER = ["keep", "suppress", "delete"]
+LINK_MODE_LABELS = {
+    "keep": "📎 يبقى رابط العضو + يرسل الفيديو كرد عليه",
+    "suppress": "🙈 يبقى رابط العضو بدون معاينة + يرسل الفيديو كرد",
+    "delete": "🗑️ يحذف رابط العضو + يرسل الفيديو مكانه",
+}
+LINK_FILTER_ORDER = ["all", "include", "exclude"]
+LINK_CHANNEL_FILTER_LABELS = {
+    "all": "كل القنوات",
+    "include": "فقط القنوات المحددة",
+    "exclude": "كل القنوات ما عدا المحددة",
+}
+LINK_ROLE_FILTER_LABELS = {
+    "all": "كل الأعضاء",
+    "include": "فقط أصحاب الرتب المحددة",
+    "exclude": "كل الأعضاء ما عدا أصحاب الرتب المحددة",
+}
+
+
+def _next_in(order, cur):
+    i = order.index(cur) if cur in order else -1
+    return order[(i + 1) % len(order)]
+
+
+def _fmt_ids(ids, kind):
+    if not ids:
+        return "لا يوجد"
+    fmt = "<#{}>" if kind == "channel" else "<@&{}>"
+    shown = " ".join(fmt.format(i) for i in ids[:15])
+    if len(ids) > 15:
+        shown += f" و{len(ids) - 15} آخرين"
+    return shown
+
+
+def build_link_embed(enabled, cfg: dict):
+    embed = discord.Embed(
+        title="🎬 تحويل روابط السوشل ميديا إلى فيديو",
+        description="أي عضو يرسل رابط شورت/تيك توك/ريل/سبوتلايت، البوت يحوله لفيديو تلقائياً حسب الإعدادات تحت.",
+        color=discord.Color.green() if enabled else discord.Color.red(),
+    )
+    embed.add_field(name="الحالة", value="✅ مفعلة" if enabled else "❌ معطلة", inline=False)
+    embed.add_field(name="رسالة الرابط", value=LINK_MODE_LABELS.get(cfg["mode"], LINK_MODE_LABELS["keep"]), inline=False)
+
+    ch_mode = cfg["channel_mode"] if cfg["channel_mode"] in LINK_FILTER_ORDER else "all"
+    ch_val = LINK_CHANNEL_FILTER_LABELS[ch_mode]
+    if ch_mode != "all":
+        ch_val += "\n" + _fmt_ids(cfg["channels"], "channel")
+        if ch_mode == "include" and not cfg["channels"]:
+            ch_val += "\n⚠️ ما حددت أي قناة، فالميزة ما بتشتغل في أي مكان."
+    embed.add_field(name="📺 وين تشتغل", value=ch_val, inline=False)
+
+    r_mode = cfg["role_mode"] if cfg["role_mode"] in LINK_FILTER_ORDER else "all"
+    r_val = LINK_ROLE_FILTER_LABELS[r_mode]
+    if r_mode != "all":
+        r_val += "\n" + _fmt_ids(cfg["roles"], "role")
+        if r_mode == "include" and not cfg["roles"]:
+            r_val += "\n⚠️ ما حددت أي رتبة، فالميزة ما بتشتغل لأي عضو."
+    embed.add_field(name="👥 لمين تشتغل", value=r_val, inline=False)
+
+    plats = " • ".join(f"{'✅' if cfg['platforms'].get(k, True) else '❌'} {name}" for k, name in LINK_PLATFORMS.items())
+    embed.add_field(name="🌐 المنصات", value=plats, inline=False)
+    embed.add_field(name="⏱️ أقصى مدة للفيديو", value=f"{cfg['max_duration']} ثانية", inline=False)
+    return embed
+
+
+async def refresh_link_panel(interaction: discord.Interaction):
+    st = await db.get_guild_settings(interaction.guild_id)
+    cfg = await db.get_link_config(interaction.guild_id)
+    enabled = st.get('link_embed_enabled')
+    enabled = 1 if enabled is None else enabled
+    await edit_reply(interaction, embed=build_link_embed(enabled, cfg), view=LinkEmbedView())
+
+
+async def _link_update(interaction: discord.Interaction, **changes):
+    cfg = await db.get_link_config(interaction.guild_id)
+    cfg.update(changes)
+    await db.set_link_config(interaction.guild_id, cfg)
+    await refresh_link_panel(interaction)
+
+
+class _LinkBaseView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not interaction.user.guild_permissions.administrator:
+            await reply(interaction, "❌ هذه اللوحة للإداريين فقط!", ephemeral=True)
+            return False
+        return True
+
+
+class LinkDurationModal(discord.ui.Modal, title="أقصى مدة للفيديو"):
+    seconds = discord.ui.TextInput(label="بالثواني (من 10 إلى 300)", placeholder="180", required=True, max_length=3)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            val = int(self.seconds.value.strip())
+        except ValueError:
+            await reply(interaction, "❌ اكتب رقم صحيح بالثواني!", ephemeral=True)
+            return
+        await _link_update(interaction, max_duration=max(10, min(300, val)))
+
+
+class LinkChannelsSelect(discord.ui.ChannelSelect):
+    def __init__(self, guild, cfg):
+        defaults = []
+        for cid in cfg.get("channels", [])[:25]:
+            if guild and guild.get_channel(cid):
+                defaults.append(discord.SelectDefaultValue(id=cid, type=discord.SelectDefaultValueType.channel))
+        kwargs = dict(
+            placeholder="📺 اختر القنوات أو الكاتيجوريات (حتى 25)...",
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.voice,
+                           discord.ChannelType.forum, discord.ChannelType.category],
+            min_values=0, max_values=25,
+        )
+        try:
+            super().__init__(default_values=defaults, **kwargs)
+        except TypeError:  # نسخة discord.py قديمة ما تدعم default_values
+            super().__init__(**kwargs)
+
+    async def callback(self, interaction: discord.Interaction):
+        await _link_update(interaction, channels=[c.id for c in self.values])
+
+
+class LinkRolesSelect(discord.ui.RoleSelect):
+    def __init__(self, guild, cfg):
+        defaults = []
+        for rid in cfg.get("roles", [])[:25]:
+            if guild and guild.get_role(rid):
+                defaults.append(discord.SelectDefaultValue(id=rid, type=discord.SelectDefaultValueType.role))
+        kwargs = dict(placeholder="👥 اختر الرتب (حتى 25)...", min_values=0, max_values=25)
+        try:
+            super().__init__(default_values=defaults, **kwargs)
+        except TypeError:
+            super().__init__(**kwargs)
+
+    async def callback(self, interaction: discord.Interaction):
+        await _link_update(interaction, roles=[r.id for r in self.values])
+
+
+class LinkPlatformsSelect(discord.ui.Select):
+    def __init__(self, cfg):
+        options = [
+            discord.SelectOption(label=name, value=key, default=bool(cfg["platforms"].get(key, True)))
+            for key, name in LINK_PLATFORMS.items()
+        ]
+        super().__init__(placeholder="🌐 اختر المنصات المفعلة...", min_values=0, max_values=len(options), options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        chosen = set(self.values)
+        await _link_update(interaction, platforms={k: (k in chosen) for k in LINK_PLATFORMS})
+
+
+class LinkPickerView(_LinkBaseView):
+    def __init__(self, select):
+        super().__init__()
+        self.add_item(select)
+
+    @discord.ui.button(label="رجوع", style=discord.ButtonStyle.secondary, row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await refresh_link_panel(interaction)
+
+
+class LinkEmbedView(_LinkBaseView):
+    @discord.ui.button(label="تفعيل / تعطيل", style=discord.ButtonStyle.success, row=0)
+    async def toggle_enabled(self, interaction: discord.Interaction, button: discord.ui.Button):
+        st = await db.get_guild_settings(interaction.guild_id)
+        cur = st.get('link_embed_enabled')
+        cur = 1 if cur is None else cur
+        await db.update_guild_setting(interaction.guild_id, "link_embed_enabled", 0 if cur else 1)
+        await refresh_link_panel(interaction)
+
+    @discord.ui.button(label="🔁 وضع رسالة الرابط", style=discord.ButtonStyle.primary, row=0)
+    async def cycle_mode(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cfg = await db.get_link_config(interaction.guild_id)
+        await _link_update(interaction, mode=_next_in(LINK_MODE_ORDER, cfg["mode"]))
+
+    @discord.ui.button(label="🔁 نطاق القنوات", style=discord.ButtonStyle.secondary, row=1)
+    async def cycle_channel_mode(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cfg = await db.get_link_config(interaction.guild_id)
+        await _link_update(interaction, channel_mode=_next_in(LINK_FILTER_ORDER, cfg["channel_mode"]))
+
+    @discord.ui.button(label="🔁 نطاق الأعضاء", style=discord.ButtonStyle.secondary, row=1)
+    async def cycle_role_mode(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cfg = await db.get_link_config(interaction.guild_id)
+        await _link_update(interaction, role_mode=_next_in(LINK_FILTER_ORDER, cfg["role_mode"]))
+
+    @discord.ui.button(label="📺 اختيار القنوات", style=discord.ButtonStyle.secondary, row=2)
+    async def pick_channels(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cfg = await db.get_link_config(interaction.guild_id)
+        embed = discord.Embed(title="📺 اختيار القنوات", description="اختر القنوات أو الكاتيجوريات (الكاتيجوري يشمل كل رومات داخلها). اترك الاختيار فاضي لمسح القائمة.", color=discord.Color.blurple())
+        await edit_reply(interaction, embed=embed, view=LinkPickerView(LinkChannelsSelect(interaction.guild, cfg)))
+
+    @discord.ui.button(label="👥 اختيار الرتب", style=discord.ButtonStyle.secondary, row=2)
+    async def pick_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cfg = await db.get_link_config(interaction.guild_id)
+        embed = discord.Embed(title="👥 اختيار الرتب", description="اختر الرتب اللي تنطبق عليها الميزة (أو تُستثنى منها حسب نطاق الأعضاء). اترك الاختيار فاضي لمسح القائمة.", color=discord.Color.blurple())
+        await edit_reply(interaction, embed=embed, view=LinkPickerView(LinkRolesSelect(interaction.guild, cfg)))
+
+    @discord.ui.button(label="🌐 المنصات", style=discord.ButtonStyle.secondary, row=2)
+    async def pick_platforms(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cfg = await db.get_link_config(interaction.guild_id)
+        embed = discord.Embed(title="🌐 المنصات", description="اختر المنصات اللي تبيها تتحول لفيديو.", color=discord.Color.blurple())
+        await edit_reply(interaction, embed=embed, view=LinkPickerView(LinkPlatformsSelect(cfg)))
+
+    @discord.ui.button(label="⏱️ أقصى مدة", style=discord.ButtonStyle.secondary, row=3)
+    async def set_duration(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(LinkDurationModal())
+
+    @discord.ui.button(label="الرجوع", style=discord.ButtonStyle.secondary, row=3)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        st = await db.get_guild_settings(interaction.guild_id)
+        await edit_reply(interaction, embed=build_automod_embed(st), view=AutoModSettingsView())
+
+
 class AutoModSettingsView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -280,14 +506,9 @@ class AutoModSettingsView(discord.ui.View):
         await db.update_guild_setting(interaction.guild_id, "anti_invites", new_val)
         await reply(interaction, f"تم {'تفعيل' if new_val else 'تعطيل'} مانع دعوات السيرفرات!", ephemeral=True)
 
-    @discord.ui.button(label="تحويل روابط السوشل لفيديو", style=discord.ButtonStyle.success, row=1)
-    async def toggle_link_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
-        st = await db.get_guild_settings(interaction.guild_id)
-        cur = st.get('link_embed_enabled')
-        cur = 1 if cur is None else cur
-        new_val = 0 if cur else 1
-        await db.update_guild_setting(interaction.guild_id, "link_embed_enabled", new_val)
-        await reply(interaction, f"تم {'تفعيل' if new_val else 'تعطيل'} تحويل روابط السوشل ميديا إلى فيديو تلقائياً!", ephemeral=True)
+    @discord.ui.button(label="🎬 إعدادات تحويل روابط السوشل", style=discord.ButtonStyle.success, row=1)
+    async def open_link_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await refresh_link_panel(interaction)
 
     @discord.ui.button(label="تعديل الكلمات الممنوعة", style=discord.ButtonStyle.secondary, row=1)
     async def edit_words(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -434,13 +655,7 @@ class DashboardSelectMenu(discord.ui.Select):
             await edit_reply(interaction, embed=embed, view=GeneralSettingsView())
 
         elif sel == "automod":
-            embed = discord.Embed(title="🛡️ إعدادات الحماية والتعديل الآلي", color=discord.Color.red())
-            embed.add_field(name="الحماية العامة", value="✅ مفعلة" if st['automod_enabled'] else "❌ معطلة", inline=True)
-            embed.add_field(name="منع الروابط", value="✅ مفعل" if st['anti_links'] else "❌ معطل", inline=True)
-            embed.add_field(name="منع الدعوات", value="✅ مفعل" if st['anti_invites'] else "❌ معطل", inline=True)
-            _le = st.get('link_embed_enabled')
-            embed.add_field(name="تحويل روابط السوشل لفيديو", value="❌ معطل" if _le == 0 else "✅ مفعل", inline=True)
-            embed.add_field(name="الكلمات الممنوعة", value=st['automod_badwords'] if st['automod_badwords'] else "لا توجد كلمات ممنوعة", inline=False)
+            embed = build_automod_embed(st)
             await edit_reply(interaction, embed=embed, view=AutoModSettingsView())
 
         elif sel == "auto_responses":
