@@ -280,6 +280,15 @@ class AutoModSettingsView(discord.ui.View):
         await db.update_guild_setting(interaction.guild_id, "anti_invites", new_val)
         await reply(interaction, f"تم {'تفعيل' if new_val else 'تعطيل'} مانع دعوات السيرفرات!", ephemeral=True)
 
+    @discord.ui.button(label="تحويل روابط السوشل لفيديو", style=discord.ButtonStyle.success, row=1)
+    async def toggle_link_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
+        st = await db.get_guild_settings(interaction.guild_id)
+        cur = st.get('link_embed_enabled')
+        cur = 1 if cur is None else cur
+        new_val = 0 if cur else 1
+        await db.update_guild_setting(interaction.guild_id, "link_embed_enabled", new_val)
+        await reply(interaction, f"تم {'تفعيل' if new_val else 'تعطيل'} تحويل روابط السوشل ميديا إلى فيديو تلقائياً!", ephemeral=True)
+
     @discord.ui.button(label="تعديل الكلمات الممنوعة", style=discord.ButtonStyle.secondary, row=1)
     async def edit_words(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditBadwordsModal())
@@ -429,6 +438,8 @@ class DashboardSelectMenu(discord.ui.Select):
             embed.add_field(name="الحماية العامة", value="✅ مفعلة" if st['automod_enabled'] else "❌ معطلة", inline=True)
             embed.add_field(name="منع الروابط", value="✅ مفعل" if st['anti_links'] else "❌ معطل", inline=True)
             embed.add_field(name="منع الدعوات", value="✅ مفعل" if st['anti_invites'] else "❌ معطل", inline=True)
+            _le = st.get('link_embed_enabled')
+            embed.add_field(name="تحويل روابط السوشل لفيديو", value="❌ معطل" if _le == 0 else "✅ مفعل", inline=True)
             embed.add_field(name="الكلمات الممنوعة", value=st['automod_badwords'] if st['automod_badwords'] else "لا توجد كلمات ممنوعة", inline=False)
             await edit_reply(interaction, embed=embed, view=AutoModSettingsView())
 
