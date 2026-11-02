@@ -71,7 +71,8 @@ class Database:
                     automod_badwords TEXT DEFAULT '',
                     anti_links INT DEFAULT 0,
                     anti_invites INT DEFAULT 0,
-                    anti_spam INT DEFAULT 0
+                    anti_spam INT DEFAULT 0,
+                    link_embed_enabled INT DEFAULT 1
                 );
 
                 CREATE TABLE IF NOT EXISTS level_rewards (
@@ -181,6 +182,7 @@ class Database:
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS anti_links INT DEFAULT 0;",
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS anti_invites INT DEFAULT 0;",
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS anti_spam INT DEFAULT 0;",
+                "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS link_embed_enabled INT DEFAULT 1;",
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS ticket_support_role_ids TEXT DEFAULT '[]';",
                 "ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS custom_embeds TEXT DEFAULT '{}';",
                 "CREATE INDEX IF NOT EXISTS idx_activity_lookup ON activity_log (guild_id, user_id, timestamp);",
