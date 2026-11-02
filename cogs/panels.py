@@ -727,30 +727,42 @@ class DeleteConfirmView(BackToEditorView):
         await show_home(interaction)
 
 
+class PublishChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self, panel_id: int):
+        super().__init__(placeholder="📢 اختر القناة...",
+                         channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+                         min_values=1, max_values=1, row=0)
+        self.panel_id = panel_id
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            ch = interaction.guild.get_channel(self.values[0].id) \
+                or await interaction.guild.fetch_channel(self.values[0].id)
+            perms = ch.permissions_for(interaction.guild.me)
+            if not (perms.view_channel and perms.send_messages and perms.embed_links):
+                return await interaction.followup.send("❌ لا أملك صلاحية الإرسال/الإمبد في هذه القناة.", ephemeral=True)
+            panel = await load_panel(self.panel_id, interaction.guild_id)
+            if not panel:
+                return await interaction.followup.send("❌ اللوحة غير موجودة.", ephemeral=True)
+            msg = await ch.send(content=panel["config"].get("content") or None,
+                                embed=build_embed(panel), view=build_public_view(panel))
+            await db.update_panel(self.panel_id, channel_id=ch.id, message_id=msg.id)
+            await interaction.edit_original_response(
+                content=f"✅ تم النشر: {msg.jump_url}", embeds=[],
+                view=BackToEditorView(interaction.user.id, self.panel_id))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ خطأ: `{type(e).__name__}: {e}`", ephemeral=True)
+
+
 class PublishView(BackToEditorView):
     def __init__(self, owner_id: int, panel_id: int):
         super().__init__(owner_id, panel_id)
-        sel = discord.ui.ChannelSelect(placeholder="📢 اختر القناة...", channel_types=[discord.ChannelType.text],
-                                       min_values=1, max_values=1, row=0)
-        sel.callback = self.on_select
-        self.sel = sel
-        self.add_item(sel)
-
-    async def on_select(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        ch = interaction.guild.get_channel(self.sel.values[0].id)
-        perms = ch.permissions_for(interaction.guild.me)
-        if not (perms.view_channel and perms.send_messages and perms.embed_links):
-            return await interaction.followup.send("❌ لا أملك صلاحية الإرسال/الإمبد في هذه القناة.", ephemeral=True)
-        panel = await load_panel(self.panel_id, interaction.guild_id)
-        try:
-            msg = await ch.send(content=panel["config"].get("content") or None, embed=build_embed(panel),
-                                view=build_public_view(panel))
-        except discord.HTTPException as e:
-            return await interaction.followup.send(f"❌ تعذر النشر: {e}", ephemeral=True)
-        await db.update_panel(self.panel_id, channel_id=ch.id, message_id=msg.id)
-        await interaction.edit_original_response(content=f"✅ تم النشر: {msg.jump_url}", embeds=[],
-                                                view=BackToEditorView(interaction.user.id, self.panel_id))
+        self.remove_item(self.back)                    # نفرّغ الصف 0 للقائمة
+        self.add_item(PublishChannelSelect(panel_id))  # الصف 0
+        self.add_item(self.back)                       # يرجع تلقائياً للصف 1
 
 
 # ---------- مودالات الإمبد ----------
