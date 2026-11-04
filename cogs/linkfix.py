@@ -1,10 +1,13 @@
 import asyncio
+import json
 import os
 import re
 import shutil
 import tempfile
 import time
+from urllib.parse import urlparse
 
+import aiohttp
 import discord
 from discord.ext import commands
 
@@ -24,10 +27,34 @@ except Exception:
 # ───────────── إعدادات ─────────────
 MAX_LINKS_PER_MESSAGE = 2            # أقصى عدد روابط يتحول من رسالة وحدة
 MAX_DOWNLOAD_BYTES = 150 * 1024 * 1024
-DOWNLOAD_TIMEOUT = 120               # ثواني
+DOWNLOAD_TIMEOUT = 120               # ثواني (yt-dlp)
+HTTP_TIMEOUT = 30                    # ثواني لطلبات الـ API
+FILE_TIMEOUT = 120                   # ثواني لتحميل الملف من الرابط المباشر
 COMPRESS_TIMEOUT = 150               # ثواني
 USER_COOLDOWN = 4                    # ثواني بين كل رسالة وأخرى لنفس العضو
 MAX_PARALLEL = 2                     # عدد التحميلات المتزامنة
+
+# ───────────── مصادر التحميل ─────────────
+# Cobalt: يفضّل تشغيل نسختك الخاصة (Docker) لأن النسخ العامة غالباً تطلب مفتاح أو تقفل.
+#   COBALT_API_URL = رابط واحد أو أكثر مفصولة بفاصلة، مثال: https://cobalt.example.com/
+#   COBALT_API_KEY = (اختياري) مفتاح الـ API إذا النسخة تطلبه
+COBALT_URLS = [u.strip() for u in os.getenv("COBALT_API_URL", "").split(",") if u.strip()]
+COBALT_KEY = os.getenv("COBALT_API_KEY", "").strip()
+# (اختياري) ملف cookies لـ yt-dlp بصيغة Netscape، يساعد مع الانستا
+YTDLP_COOKIES = os.getenv("YTDLP_COOKIES", "").strip()
+
+# ترتيب المحاولة لكل منصة: أول مصدر ينجح يكفي
+PROVIDER_ORDER = {
+    "instagram": ["ytdlp"],
+    "tiktok": ["tikwm", "cobalt", "ytdlp"],
+    "x": ["fxtwitter", "cobalt", "ytdlp"],
+    "youtube": ["cobalt", "ytdlp"],
+    "snapchat": ["cobalt", "ytdlp"],
+    "facebook": ["cobalt", "ytdlp"],
+}
+
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
 # المنصات المدعومة: (مفتاح المنصة، النمط). روابط الفيديو القصير فقط، مو فيديوهات يوتيوب الطويلة
 SUPPORTED = [
@@ -70,6 +97,16 @@ class LinkFix(commands.Cog):
         self.bot = bot
         self._sem = asyncio.Semaphore(MAX_PARALLEL)
         self._cooldown = {}
+        self._session = None
+
+    async def cog_unload(self):
+        if self._session and not self._session.closed:
+            await self._session.close()
+
+    def _http(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(headers={"User-Agent": UA})
+        return self._session
 
     # ───────────── فلاتر القنوات والرتب ─────────────
     @staticmethod
@@ -105,10 +142,8 @@ class LinkFix(commands.Cog):
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild or not message.content:
             return
-        if yt_dlp is None:
-            return
 
-        # اللي فيه رابط مدعوم أصلاً؟ (فحص سريع قبل أي استعلام قاعدة بيانات)
+        # فيه رابط مدعوم أصلاً؟ (فحص سريع قبل أي استعلام قاعدة بيانات)
         found = []
         for m in URL_RE.finditer(message.content):
             u = m.group(0).rstrip(".,!?)]}'\"")
@@ -132,10 +167,10 @@ class LinkFix(commands.Cog):
             return
 
         platforms = cfg.get("platforms", {})
-        all_urls = [u for u, key in found if platforms.get(key, True)]
-        if not all_urls:
+        all_items = [(u, key) for u, key in found if platforms.get(key, True)]
+        if not all_items:
             return
-        urls = all_urls[:MAX_LINKS_PER_MESSAGE]
+        items = all_items[:MAX_LINKS_PER_MESSAGE]
 
         perms = message.channel.permissions_for(message.guild.me)
         if not (perms.send_messages and perms.attach_files):
@@ -143,7 +178,7 @@ class LinkFix(commands.Cog):
 
         # الوضع الفعلي: ما نحذف إلا إذا عندنا صلاحية، وكل الروابط بنحولها
         mode = cfg.get("mode", "keep")
-        if mode == "delete" and not (perms.manage_messages and len(urls) == len(all_urls)):
+        if mode == "delete" and not (perms.manage_messages and len(items) == len(all_items)):
             mode = "keep"
         if mode == "suppress" and not perms.manage_messages:
             mode = "keep"
@@ -159,7 +194,7 @@ class LinkFix(commands.Cog):
         caption = None
         if mode == "delete":
             rest = message.content
-            for u in urls:
+            for u, _ in items:
                 rest = rest.replace(u, "")
             rest = rest.strip()[:500]
             caption = f"🎬 {message.author.mention}" + (f"\n{rest}" if rest else "")
@@ -171,8 +206,8 @@ class LinkFix(commands.Cog):
 
         results = []
         try:
-            for i, url in enumerate(urls):
-                ok = await self._process(message, url, max_duration,
+            for i, (url, key) in enumerate(items):
+                ok = await self._process(message, url, key, max_duration,
                                          use_reply=(mode != "delete"),
                                          content=caption if i == 0 else None)
                 results.append(ok)
@@ -191,20 +226,19 @@ class LinkFix(commands.Cog):
             pass
 
     # ───────────── المعالجة ─────────────
-    async def _process(self, message: discord.Message, url: str, max_duration: int,
+    async def _process(self, message: discord.Message, url: str, platform: str, max_duration: int,
                        use_reply: bool, content=None) -> bool:
         """يرجع True إذا انرسل الفيديو."""
         limit = max(message.guild.filesize_limit - 300_000, 1_000_000)
         async with self._sem:
             tmp = tempfile.mkdtemp(prefix="linkfix_")
             try:
-                path, info = await asyncio.wait_for(
-                    asyncio.to_thread(self._download, url, tmp, max_duration), timeout=DOWNLOAD_TIMEOUT)
+                path, duration = await self._fetch(url, platform, tmp, max_duration)
                 if not path:
                     return False
 
                 if os.path.getsize(path) > limit:
-                    path = await self._compress(path, info.get("duration"), limit, tmp)
+                    path = await self._compress(path, duration, limit, tmp)
                     if not path or os.path.getsize(path) > limit:
                         await self._send(message, True, content="❌ الفيديو كبير وما قدرت أصغّره لحجم يناسب السيرفر.",
                                          delete_after=8)
@@ -212,8 +246,6 @@ class LinkFix(commands.Cog):
 
                 await self._send(message, use_reply, path=path, content=content)
                 return True
-            except asyncio.TimeoutError:
-                print(f"[linkfix] انتهت مهلة التحميل: {url}")
             except Exception as e:
                 # ما نرسل أخطاء للروم: الرابط ممكن يكون صورة/ستوري خاص ... إلخ
                 print(f"[linkfix] فشل تحويل {url}: {type(e).__name__}: {e}")
@@ -235,13 +267,151 @@ class LinkFix(commands.Cog):
                 return
             except discord.HTTPException:
                 pass  # الرسالة الأصلية انحذفت؟ نرسل عادي
-        try:
-            await message.channel.send(allowed_mentions=discord.AllowedMentions.none(), **build())
-        except discord.HTTPException as e:
-            raise
+        await message.channel.send(allowed_mentions=discord.AllowedMentions.none(), **build())
 
-    # ───────────── التحميل (يشتغل في thread) ─────────────
-    def _download(self, url: str, tmp: str, max_duration: int):
+    # ───────────── اختيار المصدر ─────────────
+    async def _fetch(self, url: str, platform: str, tmp: str, max_duration: int):
+        """يجرب مصادر المنصة بالترتيب. يرجع (مسار الملف، المدة) أو (None, None)."""
+        for provider in PROVIDER_ORDER.get(platform, ["ytdlp"]):
+            try:
+                if provider == "ytdlp":
+                    if yt_dlp is None:
+                        continue
+                    path, duration = await asyncio.wait_for(
+                        asyncio.to_thread(self._download_ytdlp, url, tmp, max_duration),
+                        timeout=DOWNLOAD_TIMEOUT)
+                else:
+                    if provider == "cobalt" and not COBALT_URLS:
+                        continue
+                    if provider == "tikwm":
+                        direct, duration = await self._api_tikwm(url)
+                    elif provider == "fxtwitter":
+                        direct, duration = await self._api_fxtwitter(url)
+                    else:
+                        direct, duration = await self._api_cobalt(url)
+                    if not direct:
+                        continue
+                    if duration and duration > max_duration:
+                        print(f"[linkfix] {provider}: الفيديو أطول من الحد ({duration}s): {url}")
+                        return None, None
+                    path = await self._download_file(direct, tmp)
+                    if path and not duration:
+                        duration = await self._probe_duration(path)
+                        if duration and duration > max_duration:
+                            print(f"[linkfix] {provider}: الفيديو أطول من الحد ({duration}s): {url}")
+                            return None, None
+
+                if path:
+                    print(f"[linkfix] نجح {platform} عبر {provider}")
+                    return path, duration
+            except asyncio.TimeoutError:
+                print(f"[linkfix] {provider}: انتهت المهلة ({platform}): {url}")
+            except Exception as e:
+                print(f"[linkfix] {provider} فشل ({platform}): {type(e).__name__}: {e}")
+        return None, None
+
+    # ───────────── مصادر الـ API ─────────────
+    async def _get_json(self, url: str, **kw):
+        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+        async with self._http().get(url, timeout=timeout, **kw) as r:
+            return await r.json(content_type=None)
+
+    async def _api_tikwm(self, url: str):
+        data = await self._get_json("https://www.tikwm.com/api/", params={"url": url, "hd": "1"})
+        if not isinstance(data, dict) or data.get("code") != 0:
+            raise RuntimeError(f"tikwm: {str((data or {}).get('msg'))[:100]}")
+        d = data.get("data") or {}
+        link = d.get("hdplay") or d.get("play")
+        if not link:
+            return None, None  # غالباً سلايد صور مو فيديو
+        if link.startswith("/"):
+            link = "https://www.tikwm.com" + link
+        return link, d.get("duration")
+
+    async def _api_fxtwitter(self, url: str):
+        m = re.search(r"/(\w+)/status/(\d+)", url)
+        if not m:
+            return None, None
+        data = await self._get_json(f"https://api.fxtwitter.com/{m.group(1)}/status/{m.group(2)}")
+        tweet = (data or {}).get("tweet") or {}
+        videos = ((tweet.get("media") or {}).get("videos")) or []
+        if not videos:
+            return None, None
+        v = videos[0]
+        return v.get("url"), v.get("duration")
+
+    async def _api_cobalt(self, url: str):
+        payload = {"url": url, "videoQuality": "720", "youtubeVideoCodec": "h264", "filenameStyle": "basic"}
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        if COBALT_KEY:
+            headers["Authorization"] = f"Api-Key {COBALT_KEY}"
+        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+
+        last_err = None
+        for base in COBALT_URLS:
+            try:
+                async with self._http().post(base, json=payload, headers=headers, timeout=timeout) as r:
+                    data = await r.json(content_type=None)
+                status = (data or {}).get("status")
+                if status in ("tunnel", "redirect", "stream"):
+                    return data.get("url"), None
+                if status == "picker":
+                    for item in data.get("picker") or []:
+                        if item.get("type") in (None, "video") and item.get("url"):
+                            return item["url"], None
+                    last_err = "picker بدون فيديو"
+                    continue
+                err = (data or {}).get("error")
+                code = err.get("code") if isinstance(err, dict) else err
+                last_err = f"{base}: {code or status}"
+            except Exception as e:
+                last_err = f"{base}: {type(e).__name__}: {e}"
+        raise RuntimeError(f"cobalt: {last_err}")
+
+    # ───────────── تحميل ملف من رابط مباشر ─────────────
+    async def _download_file(self, direct_url: str, tmp: str):
+        path = os.path.join(tmp, "video.mp4")
+        timeout = aiohttp.ClientTimeout(total=FILE_TIMEOUT)
+        host = urlparse(direct_url).netloc
+        headers = {"Referer": f"https://{host}/"}
+        size = 0
+        async with self._http().get(direct_url, timeout=timeout, headers=headers) as r:
+            if r.status != 200:
+                raise RuntimeError(f"تحميل الملف رجع HTTP {r.status}")
+            ctype = (r.headers.get("Content-Type") or "").lower()
+            if "text/html" in ctype or "json" in ctype:
+                raise RuntimeError(f"الرابط المباشر مو فيديو ({ctype})")
+            clen = r.content_length
+            if clen and clen > MAX_DOWNLOAD_BYTES:
+                raise RuntimeError("الملف أكبر من الحد المسموح للتحميل")
+            with open(path, "wb") as f:
+                async for chunk in r.content.iter_chunked(256 * 1024):
+                    size += len(chunk)
+                    if size > MAX_DOWNLOAD_BYTES:
+                        raise RuntimeError("الملف أكبر من الحد المسموح للتحميل")
+                    f.write(chunk)
+        if size < 1000:
+            raise RuntimeError("الملف فاضي")
+        return path
+
+    async def _probe_duration(self, path: str):
+        """يستخرج مدة الفيديو من مخرجات ffmpeg (بدون ffprobe)."""
+        if not FFMPEG:
+            return None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                FFMPEG, "-i", path,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=20)
+            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", err.decode("utf-8", "ignore"))
+            if m:
+                return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+        except Exception:
+            pass
+        return None
+
+    # ───────────── التحميل عبر yt-dlp (يشتغل في thread) ─────────────
+    def _download_ytdlp(self, url: str, tmp: str, max_duration: int):
         opts = {
             "outtmpl": os.path.join(tmp, "%(id)s.%(ext)s"),
             "format": YTDLP_FORMAT,
@@ -256,16 +426,18 @@ class LinkFix(commands.Cog):
         }
         if FFMPEG:
             opts["ffmpeg_location"] = FFMPEG
+        if YTDLP_COOKIES and os.path.exists(YTDLP_COOKIES):
+            opts["cookiefile"] = YTDLP_COOKIES
 
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
 
         if not info:
-            return None, {}
+            return None, None
         if info.get("entries"):
             entries = [e for e in info["entries"] if e]
             if not entries:
-                return None, {}
+                return None, None
             info = entries[0]
 
         files = [
@@ -273,13 +445,17 @@ class LinkFix(commands.Cog):
             if f.lower().endswith((".mp4", ".mov", ".webm", ".mkv"))
         ]
         if not files:
-            return None, info
+            return None, info.get("duration")
         files.sort(key=os.path.getsize, reverse=True)
-        return files[0], info
+        return files[0], info.get("duration")
 
     # ───────────── الضغط عند تجاوز حد الرفع ─────────────
     async def _compress(self, path: str, duration, limit: int, tmp: str):
-        if not FFMPEG or not duration:
+        if not FFMPEG:
+            return None
+        if not duration:
+            duration = await self._probe_duration(path)
+        if not duration:
             return None
         audio_k = 96
         video_k = int((limit * 8 * 0.90) / duration / 1000 - audio_k)
