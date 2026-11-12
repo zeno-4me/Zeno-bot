@@ -79,10 +79,18 @@ async def auto_defer_watchdog(interaction: discord.Interaction):
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    print(f"⚠️ حدث خطأ في الأمر ({interaction.command.name if interaction.command else 'مجهول'}): {error}")
-    traceback.print_exception(type(error), error, error.__traceback__)
-    
-    msg = "❌ حدث خطأ أثناء تنفيذ هذا الأمر! يرجى مراجعة الكونسول."
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "❌ ما عندك الصلاحيات الكافية لاستخدام هذا الأمر."
+    elif isinstance(error, app_commands.BotMissingPermissions):
+        msg = "❌ البوت ما عنده صلاحيات كافية لتنفيذ هذا الأمر."
+    elif isinstance(error, app_commands.CommandOnCooldown):
+        msg = f"⏳ استنى `{error.retry_after:.0f}` ثانية قبل ما تستخدم الأمر مرة ثانية."
+    elif isinstance(error, app_commands.CheckFailure):
+        msg = "❌ لا يمكنك استخدام هذا الأمر هنا."
+    else:
+        print(f"⚠️ حدث خطأ في الأمر ({interaction.command.name if interaction.command else 'مجهول'}): {error}")
+        traceback.print_exception(type(error), error, error.__traceback__)
+        msg = "❌ حدث خطأ أثناء تنفيذ هذا الأمر! يرجى مراجعة الكونسول."
     try:
         if interaction.response.is_done():
             await interaction.followup.send(msg, ephemeral=True)
