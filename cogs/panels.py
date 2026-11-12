@@ -165,6 +165,16 @@ class TicketOpenButton(discord.ui.DynamicItem[discord.ui.Button], template=r"pan
         await handle_ticket_open(interaction, self.panel_id)
 
 
+async def report_item_error(interaction: discord.Interaction, error: Exception):
+    """يعرض الخطأ للمستخدم بدل ما يظهر 'فشل التفاعل' بصمت."""
+    import traceback
+    traceback.print_exception(type(error), error, error.__traceback__)
+    try:
+        await respond(interaction, f"❌ حدث خطأ أثناء تنفيذ الإجراء: `{str(error)[:200]}`")
+    except Exception:
+        pass
+
+
 class TicketCloseButton(discord.ui.DynamicItem[discord.ui.Button], template=r"panel:tk:close"):
     def __init__(self):
         super().__init__(discord.ui.Button(label="إغلاق التذكرة", emoji="🔒", style=discord.ButtonStyle.danger, custom_id="panel:tk:close"))
@@ -174,16 +184,55 @@ class TicketCloseButton(discord.ui.DynamicItem[discord.ui.Button], template=r"pa
         return cls()
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
         ticket = await db.get_ticket(interaction.channel_id)
-        if not ticket or ticket["status"] != "open":
-            return await respond(interaction, "❌ هذه ليست تذكرة مفتوحة.")
-        if not await can_manage_ticket(interaction, ticket, allow_owner=True):
+        user = interaction.user
+        if ticket is None:
+            # قناة بدون سجل في القاعدة: نسمح للإدارة فقط
+            if not (user.guild_permissions.administrator or user.guild_permissions.manage_channels):
+                return await respond(interaction, "❌ لا تملك صلاحية إغلاق هذه القناة.")
+        elif not await can_manage_ticket(interaction, ticket, allow_owner=True):
             return await respond(interaction, "❌ لا تملك صلاحية إغلاق هذه التذكرة.")
-        await interaction.followup.send(
+        view = discord.ui.View(timeout=None)
+        view.add_item(TicketCloseConfirm(user.id))
+        view.add_item(TicketCloseCancel())
+        await interaction.response.send_message(
             "⚠️ هل أنت متأكد من إغلاق التذكرة؟ سيتم حفظ سجل المحادثة ثم حذف القناة.",
-            view=ConfirmCloseView(interaction.user.id, ticket), ephemeral=True
-        )
+            view=view, ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        await report_item_error(interaction, error)
+
+
+class TicketCloseConfirm(discord.ui.DynamicItem[discord.ui.Button], template=r"panel:tk:cc:(?P<uid>\d+)"):
+    def __init__(self, uid: int):
+        super().__init__(discord.ui.Button(label="تأكيد الإغلاق", emoji="🔒", style=discord.ButtonStyle.danger,
+                                           custom_id=f"panel:tk:cc:{uid}"))
+        self.uid = uid
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match, /):
+        return cls(int(match["uid"]))
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.uid:
+            return await respond(interaction, "❌ هذا الزر ليس لك.")
+        await interaction.response.edit_message(content="⏳ جاري إغلاق التذكرة...", view=None)
+        await close_ticket_channel(interaction)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        await report_item_error(interaction, error)
+
+
+class TicketCloseCancel(discord.ui.DynamicItem[discord.ui.Button], template=r"panel:tk:cx"):
+    def __init__(self):
+        super().__init__(discord.ui.Button(label="إلغاء", style=discord.ButtonStyle.secondary, custom_id="panel:tk:cx"))
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match, /):
+        return cls()
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(content="تم الإلغاء.", view=None)
 
 
 class TicketClaimButton(discord.ui.DynamicItem[discord.ui.Button], template=r"panel:tk:claim"):
@@ -405,47 +454,48 @@ async def build_transcript(channel: discord.TextChannel) -> io.BytesIO:
     return io.BytesIO("\n".join(lines).encode("utf-8"))
 
 
-class ConfirmCloseView(discord.ui.View):
-    def __init__(self, user_id: int, ticket: dict):
-        super().__init__(timeout=60)
-        self.user_id, self.ticket = user_id, ticket
+async def close_ticket_channel(interaction: discord.Interaction):
+    """يحفظ السجل ثم يحذف قناة التذكرة. لو الحذف فشل يوضح السبب بدل ما يسكت."""
+    channel, guild = interaction.channel, interaction.guild
+    ticket = await db.get_ticket(channel.id) or {"panel_id": 0, "owner_id": 0, "claimed_by": None}
 
-    @discord.ui.button(label="تأكيد الإغلاق", style=discord.ButtonStyle.danger, emoji="🔒")
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        if interaction.user.id != self.user_id:
-            return await respond(interaction, "❌ هذا الزر ليس لك.")
-        await interaction.edit_original_response(content="⏳ جاري إغلاق التذكرة...", view=None)
-        channel = interaction.channel
-        guild = interaction.guild
-        await db.close_ticket(channel.id)
-        panel = await load_panel(self.ticket["panel_id"], guild.id)
-        cfg = panel["config"] if panel else {}
-        st = await db.get_guild_settings(guild.id)
+    panel = await load_panel(ticket["panel_id"], guild.id) if ticket.get("panel_id") else None
+    cfg = panel["config"] if panel else {}
+    st = await db.get_guild_settings(guild.id)
+    try:
+        transcript = await build_transcript(channel)
+        owner = guild.get_member(ticket["owner_id"]) if ticket.get("owner_id") else None
+        emb = discord.Embed(title="🔒 تذكرة مغلقة", color=discord.Color.red())
+        emb.add_field(name="التذكرة", value=f"`{channel.name}`", inline=True)
+        emb.add_field(name="المالك", value=(owner.mention if owner else f"<@{ticket['owner_id']}>") if ticket.get("owner_id") else "—", inline=True)
+        emb.add_field(name="أغلقها", value=interaction.user.mention, inline=True)
+        if ticket.get("claimed_by"):
+            emb.add_field(name="استلمها", value=f"<@{ticket['claimed_by']}>", inline=True)
+        await send_ticket_log(guild, cfg, st, emb, discord.File(transcript, filename=f"{channel.name}.txt"))
+    except Exception as e:
+        print(f"تعذر حفظ سجل التذكرة: {e}")
+
+    try:
+        await channel.send("🔒 سيتم حذف هذه القناة بعد 5 ثوانٍ...")
+    except discord.HTTPException:
+        pass
+    await asyncio.sleep(5)
+    try:
+        await channel.delete(reason=f"إغلاق تذكرة بواسطة {interaction.user}")
+    except discord.Forbidden:
+        # نبقي التذكرة مفتوحة في القاعدة لو ما انحذفت القناة عشان تقدر تعيد المحاولة
         try:
-            transcript = await build_transcript(channel)
-            owner = guild.get_member(self.ticket["owner_id"])
-            claimed = self.ticket.get("claimed_by")
-            emb = discord.Embed(title="🔒 تذكرة مغلقة", color=discord.Color.red())
-            emb.add_field(name="التذكرة", value=f"`{channel.name}`", inline=True)
-            emb.add_field(name="المالك", value=owner.mention if owner else f"<@{self.ticket['owner_id']}>", inline=True)
-            emb.add_field(name="أغلقها", value=interaction.user.mention, inline=True)
-            if claimed:
-                emb.add_field(name="استلمها", value=f"<@{claimed}>", inline=True)
-            await send_ticket_log(guild, cfg, st, emb, discord.File(transcript, filename=f"{channel.name}.txt"))
-        except Exception as e:
-            print(f"تعذر حفظ سجل التذكرة: {e}")
-        try:
-            await channel.send("🔒 سيتم حذف هذه القناة بعد 5 ثوانٍ...")
-            await asyncio.sleep(5)
-            await channel.delete(reason=f"إغلاق تذكرة بواسطة {interaction.user}")
+            await channel.send("❌ ما قدرت أحذف القناة: أحتاج صلاحية **Manage Channels** في هذه القناة/الكاتيجوري.")
         except discord.HTTPException:
             pass
-
-    @discord.ui.button(label="إلغاء", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        await interaction.edit_original_response(content="تم الإلغاء.", view=None)
+        return
+    except discord.HTTPException as e:
+        try:
+            await channel.send(f"❌ تعذر حذف القناة: `{e}`")
+        except discord.HTTPException:
+            pass
+        return
+    await db.close_ticket(channel.id)
 
 
 # ─────────────────────────── واجهة الإدارة: أساسيات ───────────────────────────
@@ -1302,10 +1352,10 @@ class Panels(commands.Cog):
         self.bot = bot
 
     async def cog_load(self):
-        self.bot.add_dynamic_items(TicketOpenButton, TicketCloseButton, TicketClaimButton, RoleButton)
+        self.bot.add_dynamic_items(TicketOpenButton, TicketCloseButton, TicketCloseConfirm, TicketCloseCancel, TicketClaimButton, RoleButton)
 
     async def cog_unload(self):
-        self.bot.remove_dynamic_items(TicketOpenButton, TicketCloseButton, TicketClaimButton, RoleButton)
+        self.bot.remove_dynamic_items(TicketOpenButton, TicketCloseButton, TicketCloseConfirm, TicketCloseCancel, TicketClaimButton, RoleButton)
 
     @app_commands.command(name="panels", description="نظام اللوحات المتكامل: إمبدز، تذاكر، وأزرار رتب")
     @app_commands.guild_only()
