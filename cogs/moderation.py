@@ -24,6 +24,27 @@ async def set_everyone_send(channel, role, value):
     await channel.set_permissions(role, overwrite=None if ow.is_empty() else ow)
 
 
+async def send_dm(guild_id: int, member: discord.Member, key: str, **variables):
+    """يرسل رسالة خاصة للعضو حسب تخصيص الإدارة (معطلة افتراضياً). يرجع الرسالة أو None."""
+    kw = await db.auto_kwargs(guild_id, key, name=member.display_name, server=member.guild.name, **variables)
+    if not kw:
+        return None
+    try:
+        return await member.send(**kw)
+    except (discord.Forbidden, discord.HTTPException):
+        return None
+
+
+async def public_reply(interaction: discord.Interaction, key: str, **variables):
+    """رد الأمر العام حسب تخصيص الإدارة (لو معطل يرد تأكيد بسيط للمنفذ فقط)."""
+    kw = await db.auto_kwargs(interaction.guild_id, key, server=interaction.guild.name,
+                              moderator=interaction.user.mention, **variables)
+    if kw:
+        await reply(interaction, **kw)
+    else:
+        await reply(interaction, "✅ تم تنفيذ الإجراء.", ephemeral=True)
+
+
 class Moderation(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -83,10 +104,16 @@ class Moderation(commands.Cog):
         if err:
             await reply(interaction, err, ephemeral=True)
             return
+        dm_msg = await send_dm(interaction.guild_id, member, "ban_dm", moderator=interaction.user.mention, reason=reason)
         try:
             await member.ban(reason=reason)
-            await reply(interaction, f"⛔ تم حظر {member.mention} | السبب: {reason}")
+            await public_reply(interaction, "ban_public", user=member.mention, name=member.display_name, reason=reason)
         except discord.Forbidden:
+            if dm_msg:
+                try:
+                    await dm_msg.delete()
+                except discord.HTTPException:
+                    pass
             await reply(interaction, "❌ لا أملك صلاحيات كافية لحظر هذا العضو (قد تكون رتبته أعلى مني).", ephemeral=True)
 
     @app_commands.command(name="unban", description="فك الحظر عن عضو باستخدام ID")
@@ -113,10 +140,16 @@ class Moderation(commands.Cog):
         if err:
             await reply(interaction, err, ephemeral=True)
             return
+        dm_msg = await send_dm(interaction.guild_id, member, "kick_dm", moderator=interaction.user.mention, reason=reason)
         try:
             await member.kick(reason=reason)
-            await reply(interaction, f"🚨 تم طرد {member.mention} | السبب: {reason}")
+            await public_reply(interaction, "kick_public", user=member.mention, name=member.display_name, reason=reason)
         except discord.Forbidden:
+            if dm_msg:
+                try:
+                    await dm_msg.delete()
+                except discord.HTTPException:
+                    pass
             await reply(interaction, "❌ لا أملك صلاحيات كافية لطرد هذا العضو.", ephemeral=True)
 
     @app_commands.command(name="timeout", description="كتم عضو لمنعه من الكتابة والتفاعل لفترة محددة")
@@ -132,7 +165,10 @@ class Moderation(commands.Cog):
         try:
             duration = timedelta(minutes=minutes)
             await member.timeout(duration, reason=reason)
-            await reply(interaction, f"🤐 تم كتم {member.mention} لمدة `{minutes}` دقيقة | السبب: {reason}")
+            await send_dm(interaction.guild_id, member, "timeout_dm", moderator=interaction.user.mention,
+                          reason=reason, minutes=minutes)
+            await public_reply(interaction, "timeout_public", user=member.mention, name=member.display_name,
+                               reason=reason, minutes=minutes)
         except discord.Forbidden:
             await reply(interaction, "❌ لا أملك صلاحيات كافية لكتم هذا العضو.", ephemeral=True)
 
@@ -145,7 +181,7 @@ class Moderation(commands.Cog):
             return
         try:
             await member.timeout(None)
-            await reply(interaction, f"🔊 تم فك الكتم عن {member.mention}")
+            await public_reply(interaction, "unmute_public", user=member.mention, name=member.display_name)
         except discord.Forbidden:
             await reply(interaction, "❌ لا أملك صلاحيات كافية لفك الكتم عن هذا العضو.", ephemeral=True)
 
@@ -201,7 +237,11 @@ class Moderation(commands.Cog):
             await reply(interaction, "❌ لا يمكنك تحذير البوتات!", ephemeral=True)
             return
         await db.add_warning(interaction.guild_id, member.id, interaction.user.id, reason)
-        await reply(interaction, f"⚠️ تم تحذير {member.mention} | السبب: **{reason}**")
+        count = len(await db.get_warnings(interaction.guild_id, member.id))
+        await send_dm(interaction.guild_id, member, "warn_dm", moderator=interaction.user.mention,
+                      reason=reason, count=count)
+        await public_reply(interaction, "warn_public", user=member.mention, name=member.display_name,
+                           reason=reason, count=count)
 
     @app_commands.command(name="warnings", description="عرض سجل تحذيرات عضو")
     async def warnings(self, interaction: discord.Interaction, member: discord.Member):
