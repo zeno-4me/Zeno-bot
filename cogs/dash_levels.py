@@ -263,7 +263,7 @@ class RewardLevelModal(ModalBase, title="مستوى الرتبة"):
     def __init__(self, role: discord.Role, back):
         super().__init__()
         self.role, self.back = role, back
-        self.lvl = discord.ui.TextInput(label=f"اللفل المطلوب للحصول على «{role.name[:40]}»", max_length=4, placeholder="5")
+        self.lvl = discord.ui.TextInput(label="اللفل المطلوب للحصول على الرتبة", max_length=4, placeholder=f"مثال: 5 — {role.name[:50]}")
         self.add_item(self.lvl)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -371,7 +371,7 @@ class MultModal(ModalBase, title="مضاعف الخبرة"):
     def __init__(self, role: discord.Role, back):
         super().__init__()
         self.role, self.back = role, back
-        self.mult = discord.ui.TextInput(label=f"المضاعف لـ «{role.name[:40]}» (مثال 1.5)", max_length=5, placeholder="1.5")
+        self.mult = discord.ui.TextInput(label="المضاعف (مثال 1.5)", max_length=5, placeholder=f"1.5 — {role.name[:50]}")
         self.add_item(self.mult)
 
     async def on_submit(self, interaction: discord.Interaction):
