@@ -49,7 +49,7 @@ class AddShortcutModal(ModalBase, title="إضافة اختصار جديد"):
         super().__init__()
         self.back = back
         self.trigger = discord.ui.TextInput(label="الكلمة / العبارة اللي تشغّل الرد", max_length=100, placeholder="مثال: السلام عليكم")
-        self.resp = discord.ui.TextInput(label="الرد (افصل بين عدة ردود بعلامة | للاختيار العشوائي)",
+        self.resp = discord.ui.TextInput(label="الرد (افصل الردود بعلامة |)",
                                          style=discord.TextStyle.paragraph, max_length=1500, placeholder="وعليكم السلام | هلا والله {user}")
         self.add_item(self.trigger)
         self.add_item(self.resp)
@@ -284,7 +284,7 @@ class OptionsModal(ModalBase, title="خيارات الاختصار"):
         self.sid, self.back = sid, back
         self.cd = discord.ui.TextInput(label="كولداون بالثواني (0 = بدون)", max_length=6, default=str(sc["cooldown"]))
         self.da = discord.ui.TextInput(label="حذف الرد تلقائياً بعد (ثواني، 0 = لا)", max_length=6, default=str(sc["delete_after"]))
-        self.react = discord.ui.TextInput(label="إيموجي يتفاعل فيه البوت على رسالة العضو (اختياري)", required=False,
+        self.react = discord.ui.TextInput(label="إيموجي تفاعل على رسالة العضو (اختياري)", required=False,
                                           max_length=60, default=sc["react"] or None)
         for it in (self.cd, self.da, self.react):
             self.add_item(it)
