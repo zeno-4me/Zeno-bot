@@ -95,8 +95,8 @@ class WelcomeOptionsModal(ModalBase, title="خيارات الترحيب"):
         self.back = back
         self.tz = discord.ui.TextInput(label="فرق التوقيت عن UTC (للمناسبات) مثال: 3", max_length=5, default=str(cfg["tz_offset"]))
         self.da = discord.ui.TextInput(label="حذف الترحيب تلقائياً بعد (ثواني، 0 = لا)", max_length=5, default=str(cfg["delete_after"]))
-        self.fb = discord.ui.TextInput(label="وضع الرتبة: ترحيب افتراضي لو ما اختار رتبة بعد (دقائق، 0 = لا)",
-                                       max_length=5, default=str(cfg["fallback_minutes"]))
+        self.fb = discord.ui.TextInput(label="ترحيب احتياطي لو ما اختار رتبة (دقائق)",
+                                       placeholder="0 = بدون ترحيب احتياطي", max_length=5, default=str(cfg["fallback_minutes"]))
         self.dm = discord.ui.TextInput(label="رسالة الترحيب بالخاص", style=discord.TextStyle.paragraph,
                                        max_length=1000, default=cfg["dm_text"][:1000], required=False)
         for it in (self.tz, self.da, self.fb, self.dm):
